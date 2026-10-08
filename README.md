@@ -53,3 +53,8 @@ The free plan allows 50 requests an hour and 1,000 a day. To stay well under tha
 ## Compare (`/compare.html`)
 - Sets a portfolio (the one last loaded on the Analyze tab, any saved portfolio, or a file) against the sector portfolio, all 22 sector stocks equal-weighted, and the S&P 500 over 1, 3, 5, 10 and 20 years, plus a sector-mix comparison.
 - Shared browser code lives in `public/common.js` (file parsing, history loading, saved portfolios, return math).
+
+## Saved price history
+- Monthly history for every stock is saved in Netlify Blobs (store `price-history`) and refreshed at most once every 20 hours, so data providers are only called for stocks the site hasn't seen before. If a provider's limit is hit, the saved copy is used.
+- `netlify/functions/refresh-history.mjs` runs every weekday at 22:30 UTC to refresh the 22 sector stocks, SPY, and the stalest other saved stocks (up to 40 requests).
+- The 22 sector stocks are listed in `netlify/lib/sectors.mjs`.

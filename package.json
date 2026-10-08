@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Sector-diversified S&P 500 portfolio builder with live Yahoo Finance data and 5/10/20-year backtests",
-  "engines": { "node": ">=18" }
+  "description": "Sector-diversified S&P 500 portfolio builder with end-of-day market data and 1-20 year backtests",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@netlify/blobs": "10.7.13"
+  }
 }
