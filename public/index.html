@@ -87,6 +87,18 @@
   .error { background: #FBE9E7; color: var(--loss); border-radius: 8px; padding: 12px 16px; margin: 16px 0; }
   .loading { color: var(--slate); padding: 40px 0; }
 
+  section.mix { padding: 36px 0 8px; border-bottom: 1px solid var(--rule); }
+  .seg { display: inline-flex; border: 1px solid var(--ink); border-radius: 999px; overflow: hidden; }
+  .seg button { font: 500 0.875rem var(--sans); background: none; color: var(--ink); border: 0; padding: 6px 14px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+  .mix-grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin: 8px 0 24px; }
+  .pie-box { position: relative; height: 400px; }
+  .mix-table { max-width: 720px; }
+  .mix-table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; min-width: 0; background: none; }
+  .mix-table td { padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  .mix-table tr:last-child td { border-bottom: 0; }
+  .mix-table .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; vertical-align: -1px; margin-right: 8px; }
+  .mix-table .tk { color: var(--slate); font-size: 0.8125rem; }
   footer { border-top: 1px solid var(--rule); padding: 20px 0 40px; font-size: 0.8125rem; color: var(--slate); }
   footer p { max-width: 90ch; margin: 0 0 8px; }
 
@@ -100,6 +112,8 @@
     .compare { grid-template-columns: 1fr; }
     .compare > div + div { border-left: 0; padding-left: 0; border-top: 1px solid var(--rule); }
     .chart-box { height: 280px; }
+    .mix-grid { grid-template-columns: 1fr; }
+    .pie-box { height: 280px; }
     td.sector { width: auto; }
   }
 </style>
@@ -133,6 +147,21 @@
     </div>
     <div id="heroBody"><p class="loading">Loading 20 years of price history…</p></div>
     <div class="chart-box"><canvas id="chart" aria-label="Growth of $10,000"></canvas></div>
+  </section>
+
+  <section class="mix" id="mixSection" hidden>
+    <div class="section-head">
+      <h2>Sector diversification</h2>
+      <div class="seg" role="group" aria-label="Show weights" id="mixSeg">
+        <button type="button" data-v="start" aria-pressed="true">At the start</button>
+        <button type="button" data-v="today" aria-pressed="false">Today</button>
+      </div>
+    </div>
+    <p class="note" id="mixNote"></p>
+    <div class="mix-grid">
+      <div class="pie-box"><canvas id="pie" aria-label="Portfolio weight by sector"></canvas></div>
+      <table class="mix-table" id="mixTable"></table>
+    </div>
   </section>
 
   <section class="holdings">

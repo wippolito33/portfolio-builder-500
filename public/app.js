@@ -5,7 +5,9 @@ const BENCH = "SPY";
 const REFRESH_MS = 5 * 60_000; // prices are cached for 5 minutes on the server
 const COLORS = { strategy: "#B7791F", all: "#52606D", bench: "#102A43" };
 
-const state = { years: 10, portfolio: null, history: null, historyKey: "", chart: null };
+const state = { years: 10, portfolio: null, history: null, historyKey: "", chart: null, pie: null, mixView: "start" };
+// Alternating tones of one blue: slices are identified by their labels, not color.
+const PIE_TONES = ["#2F6696", "#6FA0CC", "#A9C8E4"];
 
 const $ = (id) => document.getElementById(id);
 const fmtUSD = (v, d = 0) => v == null ? "—" : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: d, minimumFractionDigits: d });
@@ -114,7 +116,7 @@ function backtest(years) {
   for (let k = startK; k <= endK; k++) labels.push(keyLabel(k));
 
   return {
-    years, labels, rows, held, eligible,
+    years, labels, rows, held, eligible, startK, endK,
     strategy: { values: strat, ...stats(strat, months) },
     all: { values: all, ...stats(all, months) },
     bench: benchVals ? { values: benchVals, ...stats(benchVals, months) } : null,
@@ -214,6 +216,91 @@ function renderAll() {
   renderHero(bt);
   renderChart(bt);
   renderTable(bt);
+  renderMix(bt);
+}
+
+// Sector weights of the held stocks: as bought (equal weight), or today after
+// each stock's growth since the start of the period.
+function renderMix(bt) {
+  const bySector = new Map();
+  for (const r of bt.held) {
+    const v = state.mixView === "today" ? r.weight * priceAt(r.series, bt.endK) / r.p0 : r.weight;
+    const e = bySector.get(r.sector) || { sector: r.sector, value: 0, syms: [] };
+    e.value += v; e.syms.push(r.symbol);
+    bySector.set(r.sector, e);
+  }
+  const total = [...bySector.values()].reduce((a, e) => a + e.value, 0);
+  const rows = [...bySector.values()].map((e) => ({ ...e, w: e.value / total }));
+  const order = state.portfolio.sectors.map((s) => s.sector);
+  if (state.mixView === "today") rows.sort((a, b) => b.w - a.w);
+  else rows.sort((a, b) => order.indexOf(a.sector) - order.indexOf(b.sector));
+  const out = state.portfolio.sectors.map((s) => s.sector).filter((s) => !bySector.has(s));
+  const dropped = bt.eligible.filter((r) => r.status === "dropped").map((r) => r.symbol);
+
+  $("mixSection").hidden = false;
+  $("mixNote").textContent = state.mixView === "start"
+    ? `${bt.held.length} stocks at ${(100 / bt.held.length).toFixed(bt.held.length === 20 ? 0 : 2)}% each, ${bt.years === 1 ? "a year" : bt.years + " years"} ago. Sectors that lost a stock to the bottom-two cut (${dropped.join(", ")}) or to a later listing hold less.`
+    : `Where the money sits today after ${bt.years === 1 ? "a year" : bt.years + " years"} of buy-and-hold with no rebalancing. Winners grow into bigger slices.`;
+
+  const colors = rows.map((_, i) => PIE_TONES[i % PIE_TONES.length]);
+  const narrow = () => $("pie").parentElement.clientWidth < 640;
+  const outside = {
+    id: "outsideLabels",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      const arcs = chart.getDatasetMeta(0).data;
+      ctx.save();
+      if (narrow()) {
+        // Small screens: percentages inside the slices; names are in the table below, clockwise from the top.
+        ctx.font = "600 11px 'Instrument Sans', system-ui, sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        arcs.forEach((arc, i) => {
+          const a = (arc.startAngle + arc.endAngle) / 2, rr = (arc.innerRadius + arc.outerRadius) / 2;
+          ctx.fillStyle = i % PIE_TONES.length === 2 ? "#102A43" : "#FFFFFF";
+          ctx.fillText(`${Math.round(rows[i].w * 100)}%`, arc.x + Math.cos(a) * rr, arc.y + Math.sin(a) * rr);
+        });
+        ctx.restore();
+        return;
+      }
+      ctx.font = "500 12px 'Instrument Sans', system-ui, sans-serif";
+      ctx.strokeStyle = "#9AA5B1";
+      ctx.lineWidth = 1;
+      arcs.forEach((arc, i) => {
+        const a = (arc.startAngle + arc.endAngle) / 2;
+        const cx = arc.x, cy = arc.y, r = arc.outerRadius;
+        const x1 = cx + Math.cos(a) * (r + 4), y1 = cy + Math.sin(a) * (r + 4);
+        const x2 = cx + Math.cos(a) * (r + 16), y2 = cy + Math.sin(a) * (r + 16);
+        const right = Math.cos(a) >= 0;
+        const x3 = x2 + (right ? 10 : -10);
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y2); ctx.stroke();
+        ctx.fillStyle = "#102A43";
+        ctx.textAlign = right ? "left" : "right";
+        ctx.textBaseline = "middle";
+        ctx.fillText(`${rows[i].sector} ${(rows[i].w * 100).toFixed(1)}%`, x3 + (right ? 4 : -4), y2);
+      });
+      ctx.restore();
+    },
+  };
+  if (state.pie) state.pie.destroy();
+  state.pie = new Chart($("pie"), {
+    type: "doughnut",
+    data: { labels: rows.map((r) => r.sector), datasets: [{ data: rows.map((r) => r.w * 100), backgroundColor: colors, borderColor: "#F6F8F7", borderWidth: 2, hoverOffset: 6 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false, cutout: "55%",
+      layout: { padding: narrow() ? 8 : { top: 30, bottom: 30, left: 200, right: 200 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (c) => `${(rows[c.dataIndex].w * 100).toFixed(1)}%: ${rows[c.dataIndex].syms.join(", ")}` } },
+      },
+    },
+    plugins: [outside],
+  });
+
+  $("mixTable").innerHTML = `<tbody>${rows.map((r, i) => `<tr>
+      <td><span class="sw" style="background:${colors[i]}"></span>${r.sector}</td>
+      <td class="num">${(r.w * 100).toFixed(1)}%</td>
+      <td class="tk">${r.syms.join(", ")}</td>
+    </tr>`).join("")}${out.map((s) => `<tr><td><span class="sw" style="background:transparent;border:1px solid var(--rule)"></span>${s}</td><td class="num">0%</td><td class="tk">None held this period</td></tr>`).join("")}</tbody>`;
 }
 
 function showError(msg) {
@@ -247,6 +334,11 @@ document.querySelectorAll(".periods button").forEach((b) =>
   })
 );
 $("refreshBtn").addEventListener("click", () => refresh(false));
+$("mixSeg").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+  state.mixView = b.dataset.v;
+  $("mixSeg").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  renderAll();
+}));
 
 refresh(true);
 setInterval(() => { if (!document.hidden) refresh(false); }, REFRESH_MS);
