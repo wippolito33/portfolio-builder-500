@@ -1,0 +1,8 @@
+{
+  "name": "portfolio-builder-500",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sector-diversified S&P 500 portfolio builder with live Yahoo Finance data and 5/10/20-year backtests",
+  "engines": { "node": ">=18" }
+}

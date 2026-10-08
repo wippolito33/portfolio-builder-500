@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portfolio Builder 500</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Instrument+Serif&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #F6F8F7;
+    --surface: #FFFFFF;
+    --ink: #102A43;
+    --slate: #52606D;
+    --rule: #D9E2EC;
+    --brass: #B7791F;
+    --gain: #12805C;
+    --loss: #C2362B;
+    --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+    --sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 16px/1.5 var(--sans);
+    font-variant-numeric: tabular-nums;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  header.top { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 28px 0 8px; flex-wrap: wrap; }
+  .brand { font: 400 2.25rem/1 var(--serif); margin: 0; letter-spacing: -0.01em; }
+  .firm { color: var(--slate); font-size: 0.875rem; margin-top: 6px; }
+  .status { font-size: 0.875rem; color: var(--slate); display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rule); }
+  .dot.live { background: var(--gain); box-shadow: 0 0 0 4px rgba(18,128,92,.15); }
+  .dot.warn { background: var(--brass); }
+  button.ghost { font: 500 0.875rem var(--sans); color: var(--ink); background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button.ghost:hover { border-color: var(--ink); }
+
+  /* Hero: the backtest headline */
+  .hero { padding: 40px 0 8px; border-bottom: 1px solid var(--rule); }
+  .periods { display: inline-flex; border: 1px solid var(--ink); border-radius: 999px; overflow: hidden; margin-bottom: 28px; }
+  .periods button { font: 500 0.9375rem var(--sans); background: none; color: var(--ink); border: 0; padding: 8px 20px; cursor: pointer; }
+  .periods button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+  .headline { font: 400 clamp(2rem, 4.6vw, 3.5rem)/1.08 var(--serif); margin: 0 0 12px; max-width: 22ch; letter-spacing: -0.015em; }
+  .headline .amt { color: var(--brass); }
+  .sub { color: var(--slate); max-width: 64ch; margin: 0 0 28px; }
+
+  .compare { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--rule); }
+  .compare > div { padding: 18px 20px 20px 0; }
+  .compare > div + div { padding-left: 20px; border-left: 1px solid var(--rule); }
+  .compare h3 { font: 500 0.9375rem var(--sans); margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+  .swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .compare .big { font: 400 2rem/1.1 var(--serif); }
+  .compare dl { display: grid; grid-template-columns: auto auto; justify-content: start; gap: 2px 14px; margin: 8px 0 0; font-size: 0.875rem; color: var(--slate); }
+  .compare dd { margin: 0; color: var(--ink); }
+
+  .chart-box { position: relative; height: 360px; margin: 8px 0 32px; }
+
+  /* Holdings */
+  section.holdings { padding: 36px 0 24px; }
+  .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+  h2 { font: 400 1.75rem/1.2 var(--serif); margin: 0; }
+  .note { font-size: 0.875rem; color: var(--slate); }
+  .table-scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; min-width: 760px; }
+  th { text-align: left; font-weight: 500; color: var(--slate); font-size: 0.8125rem; padding: 10px 14px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  th.num, td.num { text-align: right; }
+  tr.sector-start td { border-top: 1px solid var(--rule); }
+  td.sector { color: var(--slate); font-size: 0.875rem; width: 190px; }
+  .tick { font-weight: 600; }
+  .name { color: var(--slate); font-size: 0.8125rem; display: block; max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .up { color: var(--gain); }
+  .down { color: var(--loss); }
+  .tag { font-size: 0.8125rem; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .tag.held { background: #E6F2EE; color: var(--gain); }
+  .tag.dropped { background: #FBE9E7; color: var(--loss); }
+  .tag.na { background: #EEF1F4; color: var(--slate); }
+  tr.is-dropped td:not(.sector) { opacity: .7; }
+
+  .error { background: #FBE9E7; color: var(--loss); border-radius: 8px; padding: 12px 16px; margin: 16px 0; }
+  .loading { color: var(--slate); padding: 40px 0; }
+
+  footer { border-top: 1px solid var(--rule); padding: 20px 0 40px; font-size: 0.8125rem; color: var(--slate); }
+  footer p { max-width: 90ch; margin: 0 0 8px; }
+
+  button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+  @media (max-width: 720px) {
+    .compare { grid-template-columns: 1fr; }
+    .compare > div + div { border-left: 0; padding-left: 0; border-top: 1px solid var(--rule); }
+    .chart-box { height: 280px; }
+    td.sector { width: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1 class="brand">Portfolio Builder 500</h1>
+      <div class="firm">Bill Ippolito, Alexander Capital, L.P.</div>
+    </div>
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="statusText">Connecting to market data…</span>
+      <button class="ghost" id="refreshBtn" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <section class="hero" aria-live="polite">
+    <div class="periods" role="group" aria-label="Backtest period">
+      <button type="button" data-years="5" aria-pressed="false">5 years</button>
+      <button type="button" data-years="10" aria-pressed="true">10 years</button>
+      <button type="button" data-years="20" aria-pressed="false">20 years</button>
+    </div>
+    <div id="heroBody"><p class="loading">Loading 20 years of price history…</p></div>
+    <div class="chart-box"><canvas id="chart" aria-label="Growth of $10,000"></canvas></div>
+  </section>
+
+  <section class="holdings">
+    <div class="section-head">
+      <h2>The 22 holdings</h2>
+      <span class="note" id="holdNote">Top two stocks by market cap in each of the 11 S&amp;P 500 sectors</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Sector</th><th>Stock</th><th class="num">Market cap</th><th class="num">Price</th>
+            <th class="num">Today</th><th class="num" id="retHead">10-yr return</th><th>Backtest</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p>Hypothetical, backtested results for internal research only. Holdings are chosen by today's market cap and the two worst performers are removed with hindsight, so results are subject to survivorship and look-ahead bias and overstate what an investor could have achieved in real time. Assumes buy-and-hold with dividends reinvested, no rebalancing, taxes, fees or trading costs. Past performance does not guarantee future results.</p>
+    <p>Market data from Yahoo Finance, may be delayed. Not investment advice. Review with compliance before sharing any output with clients or prospects.</p>
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
