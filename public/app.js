@@ -144,7 +144,7 @@ function renderHero(bt) {
     </div>`;
 
   $("heroBody").innerHTML = `
-    <h2 class="headline">$10,000 invested ${bt.years} years ago is worth <span class="amt">${fmtUSD(s.end)}</span> today</h2>
+    <h2 class="headline">$10,000 invested ${bt.years === 1 ? "a year" : bt.years + " years"} ago is worth <span class="amt">${fmtUSD(s.end)}</span> today</h2>
     <p class="sub">Started ${bt.labels[0]}. ${weightNote} ${joinAnd(dropped)} ${dropped.length === 1 ? "was" : "were"} removed as the weakest performers over the period. Buy-and-hold, dividends reinvested.</p>
     <div class="compare">
       ${card("Portfolio Builder 500", COLORS.strategy, s)}

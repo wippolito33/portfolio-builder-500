@@ -44,7 +44,7 @@
   /* Hero: the backtest headline */
   .hero { padding: 40px 0 8px; border-bottom: 1px solid var(--rule); }
   .periods { display: inline-flex; border: 1px solid var(--ink); border-radius: 999px; overflow: hidden; margin-bottom: 28px; }
-  .periods button { font: 500 0.9375rem var(--sans); background: none; color: var(--ink); border: 0; padding: 8px 20px; cursor: pointer; }
+  .periods button { font: 500 0.9375rem var(--sans); background: none; color: var(--ink); border: 0; padding: 8px 16px; cursor: pointer; }
   .periods button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
   .headline { font: 400 clamp(2rem, 4.6vw, 3.5rem)/1.08 var(--serif); margin: 0 0 12px; max-width: 22ch; letter-spacing: -0.015em; }
   .headline .amt { color: var(--brass); }
@@ -120,13 +120,16 @@
   <nav class="pages" aria-label="Pages">
     <a href="/" aria-current="page">Sector portfolio</a>
     <a href="/analyze.html">Analyze a portfolio</a>
+    <a href="/compare.html">Compare</a>
   </nav>
 
   <section class="hero" aria-live="polite">
     <div class="periods" role="group" aria-label="Backtest period">
-      <button type="button" data-years="5" aria-pressed="false">5 years</button>
-      <button type="button" data-years="10" aria-pressed="true">10 years</button>
-      <button type="button" data-years="20" aria-pressed="false">20 years</button>
+      <button type="button" data-years="1" aria-pressed="false">1 yr</button>
+      <button type="button" data-years="3" aria-pressed="false">3 yrs</button>
+      <button type="button" data-years="5" aria-pressed="false">5 yrs</button>
+      <button type="button" data-years="10" aria-pressed="true">10 yrs</button>
+      <button type="button" data-years="20" aria-pressed="false">20 yrs</button>
     </div>
     <div id="heroBody"><p class="loading">Loading 20 years of price history…</p></div>
     <div class="chart-box"><canvas id="chart" aria-label="Growth of $10,000"></canvas></div>

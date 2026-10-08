@@ -49,3 +49,7 @@ The free plan allows 50 requests an hour and 1,000 a day. To stay well under tha
 ## Sectors and saved portfolios
 - The sector chart uses the ticker list in `public/sectors.js` (GICS sectors for stocks; funds grouped as U.S. stock, international stock, or bond funds). Unlisted tickers show as "Other"; add them there.
 - Saved portfolios live in the browser's local storage on that computer only (shares and cost basis, revalued at the latest prices when reopened). Export creates a `.json` file that can be opened on another computer from the same file picker. Nothing is stored on a server.
+
+## Compare (`/compare.html`)
+- Sets a portfolio (the one last loaded on the Analyze tab, any saved portfolio, or a file) against the sector portfolio, all 22 sector stocks equal-weighted, and the S&P 500 over 1, 3, 5, 10 and 20 years, plus a sector-mix comparison.
+- Shared browser code lives in `public/common.js` (file parsing, history loading, saved portfolios, return math).

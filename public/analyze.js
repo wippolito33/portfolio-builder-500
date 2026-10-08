@@ -2,189 +2,15 @@
 // Everything here runs in the browser. Positions files are never uploaded;
 // only ticker symbols are sent to /api/history to fetch price history.
 
-const BENCH = "SPY";
-const CONCURRENCY = 3;
-const SIMS = 4000;
-const C = { cur: "#3E7CB1", swap: "#B7791F", bench: "#8A96A3" };
-const BAND = { cur: "rgba(62,124,177,0.14)", swap: "rgba(183,121,31,0.16)" };
-
-const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const usd = (v, d = 0) => v == null || !isFinite(v) ? "—" : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: d, minimumFractionDigits: d });
-const pct = (v, d = 1, sign = true) => v == null || !isFinite(v) ? "—" : (sign && v > 0 ? "+" : "") + (v * 100).toFixed(d) + "%";
-const cls = (v) => v == null || !isFinite(v) ? "" : v >= 0 ? "up" : "down";
-const monthKey = (t) => { const d = new Date(t); return d.getUTCFullYear() * 12 + d.getUTCMonth(); };
-const keyLabel = (k) => new Date(Date.UTC(Math.floor(k / 12), k % 12, 1)).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 
 const state = {
   holdings: [],      // { symbol, name, shares, value, cost, gain, isCash, status, error }
-  series: {},        // symbol -> { map: Map(monthKey -> adjClose), first, last } | { error }
   endK: null,
   rateLimited: false,
   analysis: null,    // last swap analysis
   period: 5,
+  perfYears: 10,
   horizon: 5,
-  charts: {},
-};
-
-// ---------------------------------------------------------------- parsing
-
-function parseCSV(text) {
-  const rows = [];
-  let row = [], field = "", q = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (q) {
-      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
-      else field += c;
-    } else if (c === '"') q = true;
-    else if (c === ",") { row.push(field); field = ""; }
-    else if (c === "\n" || c === "\r") {
-      if (c === "\r" && text[i + 1] === "\n") i++;
-      row.push(field); rows.push(row); row = []; field = "";
-    } else field += c;
-  }
-  if (field !== "" || row.length) { row.push(field); rows.push(row); }
-  return rows.map((r) => r.map((s) => s.trim()));
-}
-
-function num(s) {
-  if (s == null) return null;
-  let t = String(s).trim();
-  if (!t || t === "--" || t.toLowerCase() === "n/a") return null;
-  const neg = /^\(.*\)$/.test(t);
-  t = t.replace(/[()$,%\s]/g, "");
-  const v = parseFloat(t);
-  return isFinite(v) ? (neg ? -v : v) : null;
-}
-
-const isCashLike = (sym, name) =>
-  /\b(deposit|deposits|money market|cash|sweep)\b/i.test(name || "") || /^(CASH|BDP\b|BDP-)/i.test(sym || "");
-
-const cleanSym = (s) => String(s || "").toUpperCase().replace(/^\*+/, "").replace(/\//g, "-").trim();
-
-function holdingsFromCSV(text) {
-  const rows = parseCSV(text).filter((r) => r.some((c) => c));
-  const hi = rows.findIndex((r) => r.some((c) => /^(symbol|ticker)$/i.test(c)));
-  if (hi < 0) throw new Error("Couldn't find a Symbol or Ticker column in this file.");
-  const head = rows[hi].map((h) => h.toLowerCase());
-  const col = (re, not) => head.findIndex((h) => re.test(h) && !(not && not.test(h)));
-  const iSym = col(/^(symbol|ticker)$/);
-  const iQty = col(/^(quantity|qty|shares)$/);
-  const iName = col(/^(name|description|security|security description)$/);
-  const iPrice = col(/^(price|last price|current price)$/);
-  const iMV = col(/market value|^value$|current value/);
-  const iCost = col(/net cost|cost basis|total cost/);
-  const iGain = col(/unrealized/, /%|percent/);
-  if (iQty < 0 && iMV < 0) throw new Error("Couldn't find a Quantity or Market Value column in this file.");
-
-  const out = [];
-  for (const r of rows.slice(hi + 1)) {
-    const symbol = cleanSym(r[iSym]);
-    if (!symbol || !/^[A-Z0-9.\-]{1,12}$/.test(symbol)) continue; // footers, disclaimers
-    const name = iName >= 0 ? r[iName] : "";
-    const shares = iQty >= 0 ? num(r[iQty]) : null;
-    const price = iPrice >= 0 ? num(r[iPrice]) : null;
-    let value = iMV >= 0 ? num(r[iMV]) : null;
-    if (value == null && shares != null && price != null) value = shares * price;
-    const cost = iCost >= 0 ? num(r[iCost]) : null;
-    let gain = iGain >= 0 ? num(r[iGain]) : null;
-    if (gain == null && cost != null && value != null) gain = value - cost;
-    out.push({ symbol, name, shares, value, cost, gain, isCash: isCashLike(symbol, name) });
-  }
-  if (!out.length) throw new Error("No holdings found in this file.");
-  return out;
-}
-
-function holdingsFromText(text) {
-  const out = [];
-  const bad = [];
-  for (const line of text.split(/\n/)) {
-    const t = line.trim();
-    if (!t) continue;
-    const parts = t.split(/[,\t]+|\s+/).filter(Boolean);
-    const symbol = cleanSym(parts[0]);
-    const a = num(parts[1]);
-    const cost = num(parts[2]);
-    if (!/^[A-Z0-9.\-]{1,12}$/.test(symbol) || a == null) { bad.push(t); continue; }
-    if (isCashLike(symbol, "")) out.push({ symbol: "CASH", name: "Cash", shares: null, value: a, cost: a, gain: 0, isCash: true });
-    else out.push({ symbol, name: "", shares: a, value: null, cost, gain: null, isCash: false });
-  }
-  if (bad.length) throw new Error(`Couldn't read: ${bad.slice(0, 3).join("; ")}. Use "TICKER, shares" on each line.`);
-  if (!out.length) throw new Error("Enter at least one holding.");
-  return out;
-}
-
-// ---------------------------------------------------------------- data
-
-const isLimit = (msg) => /\b429\b|rate limit|request limit|hourly|allocation|credit limit/i.test(msg || "");
-
-// Returns a series, or { error, rateLimited }. Failures aren't remembered, so a
-// later retry can succeed.
-async function fetchSeries(sym) {
-  if (state.series[sym]) return state.series[sym];
-  let data;
-  try {
-    const r = await fetch("/api/history?symbols=" + encodeURIComponent(sym));
-    data = await r.json().catch(() => null);
-    if (!data) throw new Error(`HTTP ${r.status}`);
-  } catch (e) {
-    return { error: String(e.message || e) };
-  }
-  const pts = data.series && data.series[sym];
-  if (!Array.isArray(pts) || pts.length < 2) {
-    const err = (pts && pts.error) || data.message || "No price history";
-    return { error: err, rateLimited: !!((pts && pts.rateLimited) || data.rateLimited || isLimit(err)) };
-  }
-  const map = new Map();
-  for (const p of pts) map.set(monthKey(p.t), p.p);
-  const keys = [...map.keys()];
-  const m = (data.meta && data.meta[sym]) || {};
-  return (state.series[sym] = {
-    map, first: Math.min(...keys), last: Math.max(...keys), lastPrice: pts[pts.length - 1].p,
-    source: m.source || "tiingo", adjusted: m.adjusted !== false,
-  });
-}
-
-const WAIT_SECONDS = 60;   // Twelve Data's limit resets every minute
-const MAX_WAITS = 8;
-
-function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
-
-// Loads every symbol. When both data providers say "slow down", waits a
-// minute and continues with whatever is left, up to MAX_WAITS times.
-async function loadAll(symbols, onProgress, onWait) {
-  const results = {};
-  let pending = [...symbols];
-  let done = 0;
-  state.stopWaiting = false;
-  for (let round = 0; pending.length && round <= MAX_WAITS; round++) {
-    if (round > 0) {
-      for (let s = WAIT_SECONDS; s > 0 && !state.stopWaiting; s--) { onWait(s, done, symbols.length); await sleep(1000); }
-      if (state.stopWaiting) break;
-    }
-    const queue = [...pending];
-    const retry = [];
-    let hit = false;
-    async function worker() {
-      while (queue.length && !hit) {
-        const sym = queue.shift();
-        const r = await fetchSeries(sym);
-        results[sym] = r;
-        if (r.rateLimited) { hit = true; retry.push(sym); }
-        else onProgress(++done, symbols.length);
-      }
-    }
-    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
-    pending = retry.concat(queue);
-  }
-  return results;
-}
-
-const ret = (s, k) => {
-  if (!s || !s.map) return null;
-  const a = s.map.get(k - 1), b = s.map.get(k);
-  return a && b ? b / a - 1 : null;
 };
 
 // ---------------------------------------------------------------- holdings
@@ -199,6 +25,7 @@ async function loadHoldings(list, sourceLabel, name = "") {
   $("loadMsg").innerHTML = "";
   $("holdings").hidden = false;
   $("swap").hidden = true;
+  $("perf").hidden = true;
   $("holdNote").textContent = sourceLabel;
   renderHoldings();
   renderSectors();
@@ -213,8 +40,8 @@ async function loadHoldings(list, sourceLabel, name = "") {
       `<button type="button" class="ghost" id="stopWait">Analyze with what's loaded</button>`)
   );
 
-  const bench = state.series[BENCH];
-  const lasts = Object.values(state.series).filter((s) => s.map).map((s) => s.last);
+  const bench = DATA.series[BENCH];
+  const lasts = Object.values(DATA.series).filter((s) => s.map).map((s) => s.last);
   state.endK = bench && bench.map ? bench.last : lasts.length ? Math.max(...lasts) : null;
 
   for (const h of state.holdings) {
@@ -236,7 +63,7 @@ async function loadHoldings(list, sourceLabel, name = "") {
   const missing = state.holdings.filter((h) => h.status === "nodata");
   const limited = missing.filter((h) => loaded[h.symbol] && loaded[h.symbol].rateLimited);
   const other = missing.filter((h) => !limited.includes(h));
-  const unadj = state.holdings.filter((h) => h.status === "ok" && !state.series[h.symbol].adjusted);
+  const unadj = state.holdings.filter((h) => h.status === "ok" && !DATA.series[h.symbol].adjusted);
   let msg = "";
   if (limited.length) msg += `<div class="warnbox">The free data plans' limits were reached before ${limited.map((m) => esc(m.symbol)).join(", ")} loaded, so ${limited.length === 1 ? "it is" : "they are"} left out for now. Load the file again in a few minutes; holdings already loaded are saved for 24 hours and won't count again.</div>`;
   if (other.length) msg += `<div class="warnbox">No price history for ${other.map((m) => esc(m.symbol)).join(", ")}, so ${other.length === 1 ? "it is" : "they are"} left out of the analysis.</div>`;
@@ -248,6 +75,49 @@ async function loadHoldings(list, sourceLabel, name = "") {
   }
   fillSellSelect();
   $("swap").hidden = false;
+  setLastLoaded($("saveName").value.trim() || sourceLabel, state.holdings.filter((h) => h.status === "ok" || h.status === "cash"));
+  renderPerf();
+}
+
+// ---------------------------------------------------------------- performance of the portfolio as is
+
+function perfFor(years) {
+  const endK = state.endK, startK = endK - years * 12;
+  const inc = included();
+  const { rets, coverage } = weightedReturns(inc, startK, endK);
+  const sb = DATA.series[BENCH];
+  const brets = [];
+  for (let k = startK + 1; k <= endK; k++) brets.push(ret(sb, k));
+  const bench = brets.every((r) => r != null) ? stats(brets) : null;
+  return { years, startK, endK, port: stats(rets), bench, coverage };
+}
+
+function renderPerf() {
+  if (!state.endK || !included().length) return;
+  $("perf").hidden = false;
+  const rows = PERIODS.map(perfFor);
+  const low = rows.filter((r) => r.coverage < 0.95);
+  $("perfTable").innerHTML = `
+    <thead><tr><th>Period</th><th class="num">Portfolio total</th><th class="num">Portfolio per year</th><th class="num">S&amp;P 500 total</th><th class="num">S&amp;P 500 per year</th><th class="num">Portfolio worst drop</th></tr></thead>
+    <tbody>${rows.map((r) => `<tr>
+      <td>${periodLabel(r.years)}${r.coverage < 0.95 ? " *" : ""}</td>
+      <td class="num ${cls(r.port.total)}">${pct(r.port.total)}</td>
+      <td class="num ${cls(r.port.cagr)}">${pct(r.port.cagr)}</td>
+      <td class="num ${r.bench ? cls(r.bench.total) : ""}">${r.bench ? pct(r.bench.total) : "—"}</td>
+      <td class="num ${r.bench ? cls(r.bench.cagr) : ""}">${r.bench ? pct(r.bench.cagr) : "—"}</td>
+      <td class="num down">${pct(r.port.mdd)}</td>
+    </tr>`).join("")}</tbody>`;
+  $("perfNote").textContent = low.length
+    ? `* Some holdings weren't trading yet at the start of the ${low.map((r) => r.years + "-").join(", ").replace(/, ([^,]*)$/, " and $1")}year period${low.length > 1 ? "s" : ""}; only ${pct(low[low.length - 1].coverage, 0, false)} of today's value had history ${low[low.length - 1].years} years ago, so those periods reflect the holdings that did.`
+    : "";
+
+  const r = perfFor(state.perfYears);
+  const labels = [];
+  for (let k = r.startK; k <= r.endK; k++) labels.push(keyLabel(k));
+  const ds = [line("This portfolio", r.port.path, C.cur)];
+  if (r.bench) ds.push(line("S&P 500 (SPY)", r.bench.path, C.bench, { borderWidth: 1.5, borderDash: [5, 4] }));
+  lineChart("perfChart", labels, ds, (v) => usd(v));
+  $("perfLegend").innerHTML = legend([["This portfolio", C.cur], ...(r.bench ? [["S&P 500 (SPY)", C.bench, true]] : [])]);
 }
 
 function included() {
@@ -267,7 +137,7 @@ function renderHoldings() {
   const sorted = [...state.holdings].sort((a, b) => (b.value || 0) - (a.value || 0));
   const sel = state.analysis && state.analysis.x.symbol;
   $("rows").innerHTML = sorted.map((h) => {
-    const s = state.series[h.symbol];
+    const s = DATA.series[h.symbol];
     let r5 = null;
     if (s && s.map && state.endK) {
       const a = s.map.get(state.endK - 60), b = s.map.get(state.endK);
@@ -296,15 +166,6 @@ function fillSellSelect() {
 
 // ---------------------------------------------------------------- analysis
 
-function stats(rets) {
-  let v = 10000, peak = 10000, mdd = 0;
-  const path = [v];
-  for (const r of rets) { v *= 1 + r; path.push(v); peak = Math.max(peak, v); mdd = Math.min(mdd, v / peak - 1); }
-  const n = rets.length;
-  const mean = rets.reduce((a, b) => a + b, 0) / n;
-  const sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, n - 1));
-  return { path, end: v, total: v / 10000 - 1, cagr: Math.pow(v / 10000, 12 / n) - 1, vol: sd * Math.sqrt(12), mdd };
-}
 
 function corr(a, b) {
   const n = a.length;
@@ -320,7 +181,7 @@ function corr(a, b) {
 function restReturn(rest, k) {
   let w = 0, r = 0;
   for (const h of rest) {
-    const x = h.isCash ? 0 : ret(state.series[h.symbol], k);
+    const x = h.isCash ? 0 : ret(DATA.series[h.symbol], k);
     if (x == null) continue;
     w += h.value; r += h.value * x;
   }
@@ -333,7 +194,7 @@ function analyze(xSym, ySym) {
   const rest = inc.filter((h) => h !== x);
   const total = inc.reduce((a, h) => a + h.value, 0);
   const wX = x.value / total;
-  const sx = state.series[x.symbol], sy = state.series[ySym], sb = state.series[BENCH];
+  const sx = DATA.series[x.symbol], sy = DATA.series[ySym], sb = DATA.series[BENCH];
   const endK = state.endK;
   const firstK = Math.max(sx.first, sy.first) + 1; // first month with a return for both
 
@@ -392,36 +253,8 @@ function project(a, years, taxRate) {
 
 // ---------------------------------------------------------------- render
 
-function lineChart(id, labels, datasets, yFmt) {
-  if (state.charts[id]) state.charts[id].destroy();
-  state.charts[id] = new Chart($(id), {
-    type: "line",
-    data: { labels, datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false, animation: false,
-      interaction: { mode: "index", intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          filter: (i) => !i.dataset.bandEdge,
-          callbacks: { label: (c) => `${c.dataset.label}: ${yFmt(c.parsed.y)}` },
-        },
-      },
-      scales: {
-        x: { grid: { display: false }, ticks: { maxTicksLimit: 7, color: "#52606D", font: { family: "Instrument Sans" } } },
-        y: { grid: { color: "#E6EBF0" }, border: { display: false }, ticks: { color: "#52606D", font: { family: "Instrument Sans" }, callback: (v) => yFmt(v) } },
-      },
-    },
-  });
-}
 
-const line = (label, data, color, opts = {}) => ({
-  label, data, borderColor: color, backgroundColor: color, borderWidth: 2,
-  pointRadius: 0, pointHoverRadius: 4, tension: 0.15, ...opts,
-});
 
-const legend = (items) => items.map(([label, color, dash]) =>
-  `<span><span class="swatch ${dash ? "dash" : ""}" style="background:${color}"></span>${esc(label)}</span>`).join("");
 
 function renderBacktest() {
   const a = state.analysis;
@@ -435,7 +268,7 @@ function renderBacktest() {
   }
   const actualYears = ms.length / 12;
   $("periodNote").textContent = actualYears < want - 0.1
-    ? `${state.series[xs].first >= state.series[ys].first ? xs : ys} has only traded since ${keyLabel(a.firstK - 1)}, so this covers ${actualYears.toFixed(1)} years.`
+    ? `${DATA.series[xs].first >= DATA.series[ys].first ? xs : ys} has only traded since ${keyLabel(a.firstK - 1)}, so this covers ${actualYears.toFixed(1)} years.`
     : `${keyLabel(ms[0].k - 1)} to ${keyLabel(ms[ms.length - 1].k)}`;
 
   const cur = stats(ms.map((m) => m.cur));
@@ -503,7 +336,7 @@ function renderProjection() {
   if (a.months.length < 24) {
     $("projNote").textContent = `${a.ySym} and ${a.x.symbol} need at least two years of shared history to project.`;
     $("projTable").innerHTML = "";
-    if (state.charts.projChart) { state.charts.projChart.destroy(); delete state.charts.projChart; }
+    if (CHARTS.projChart) { CHARTS.projChart.destroy(); delete CHARTS.projChart; }
     $("projLegend").innerHTML = "";
     return;
   }
@@ -536,11 +369,11 @@ function renderProjection() {
     line(`With ${a.ySym}, middle`, col(p.bands.swp, 1), C.swap),
   ];
   lineChart("projChart", labels, ds, (v) => usd(v));
-  state.charts.projChart.options.scales.x.ticks.callback = function (v, i) { return i % 12 === 0 ? this.getLabelForValue(v) : ""; };
-  state.charts.projChart.options.scales.x.ticks.maxTicksLimit = undefined;
-  state.charts.projChart.options.scales.x.ticks.autoSkip = false;
-  state.charts.projChart.options.scales.x.ticks.maxRotation = 0;
-  state.charts.projChart.update();
+  CHARTS.projChart.options.scales.x.ticks.callback = function (v, i) { return i % 12 === 0 ? this.getLabelForValue(v) : ""; };
+  CHARTS.projChart.options.scales.x.ticks.maxTicksLimit = undefined;
+  CHARTS.projChart.options.scales.x.ticks.autoSkip = false;
+  CHARTS.projChart.options.scales.x.ticks.maxRotation = 0;
+  CHARTS.projChart.update();
   $("projLegend").innerHTML = legend([["Portfolio as is, middle outcome", C.cur], [`With ${a.ySym}, middle outcome`, C.swap]]) +
     `<span>Shaded: weak to strong outcomes</span>`;
 }
@@ -628,10 +461,15 @@ $("manualBtn").addEventListener("click", () => {
   }
 });
 $("runBtn").addEventListener("click", runSwap);
-$("progress").addEventListener("click", (e) => { if (e.target.id === "stopWait") state.stopWaiting = true; });
+$("progress").addEventListener("click", (e) => { if (e.target.id === "stopWait") DATA.stopWaiting = true; });
 $("buyIn").addEventListener("keydown", (e) => { if (e.key === "Enter") runSwap(); });
 $("taxIn").addEventListener("change", () => { if (state.analysis) { renderTax(); renderProjection(); } });
 seg("periodSeg", "period", renderBacktest);
+$("perfSeg").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+  state.perfYears = Number(b.dataset.y);
+  $("perfSeg").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  renderPerf();
+}));
 seg("horizonSeg", "horizon", renderProjection);
 
 
@@ -666,8 +504,8 @@ function renderSectors() {
     },
   };
 
-  if (state.charts.sectorChart) state.charts.sectorChart.destroy();
-  state.charts.sectorChart = new Chart($("sectorChart"), {
+  if (CHARTS.sectorChart) CHARTS.sectorChart.destroy();
+  CHARTS.sectorChart = new Chart($("sectorChart"), {
     type: "bar",
     data: {
       labels: rows.map((r) => r.sector),
@@ -705,53 +543,14 @@ function renderSectors() {
 // Kept in this browser's localStorage. Nothing is sent to a server. To move
 // portfolios to another computer, export them to a file and open it there.
 
-const STORE_KEY = "pb500.portfolios.v1";
 const FILE_TAG = "portfolio-builder-500";
 
-function readSaved() {
-  try {
-    const v = JSON.parse(localStorage.getItem(STORE_KEY) || "[]");
-    return Array.isArray(v) ? v : [];
-  } catch { return []; }
-}
 
-function writeSaved(list) {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(list)); return true; }
-  catch { return false; }
-}
 
 // Stores shares and cost basis, not today's value, so reopening a saved
 // portfolio values it at the latest prices.
-function snapshot() {
-  return state.holdings.map((h) => ({
-    symbol: h.symbol,
-    name: h.name || "",
-    shares: h.shares ?? null,
-    value: h.isCash || h.shares == null ? h.value ?? null : null,
-    cost: h.cost != null ? h.cost : h.gain != null && h.value != null ? h.value - h.gain : null,
-    isCash: !!h.isCash,
-  }));
-}
 
-const finiteOrNull = (v) => (typeof v === "number" && isFinite(v) ? v : null);
 
-function cleanPortfolio(p) {
-  if (!p || typeof p.name !== "string" || !Array.isArray(p.holdings)) return null;
-  const holdings = p.holdings
-    .filter((h) => h && typeof h.symbol === "string" && /^[A-Z0-9.\-]{1,12}$/i.test(h.symbol))
-    .map((h) => ({
-      symbol: cleanSym(h.symbol), name: typeof h.name === "string" ? h.name.slice(0, 120) : "",
-      shares: finiteOrNull(h.shares), value: finiteOrNull(h.value), cost: finiteOrNull(h.cost), isCash: !!h.isCash,
-    }))
-    .filter((h) => h.shares != null || h.value != null);
-  if (!holdings.length) return null;
-  return {
-    id: typeof p.id === "string" ? p.id : String(Date.now() + Math.random()),
-    name: p.name.trim().slice(0, 80) || "Untitled",
-    savedAt: typeof p.savedAt === "string" && !isNaN(Date.parse(p.savedAt)) ? p.savedAt : new Date().toISOString(),
-    holdings,
-  };
-}
 
 function saveCurrent() {
   const name = $("saveName").value.trim();
@@ -759,13 +558,14 @@ function saveCurrent() {
   if (!name) { $("saveMsg").textContent = "Give the portfolio a name first."; $("saveName").focus(); return; }
   const list = readSaved();
   const existing = list.find((p) => p.name.toLowerCase() === name.toLowerCase());
-  const entry = { id: existing ? existing.id : String(Date.now()), name, savedAt: new Date().toISOString(), holdings: snapshot() };
+  const entry = { id: existing ? existing.id : String(Date.now()), name, savedAt: new Date().toISOString(), holdings: snapshotHoldings(state.holdings) };
   const next = existing ? list.map((p) => (p === existing ? entry : p)) : [entry, ...list];
   if (!writeSaved(next)) {
     $("saveMsg").textContent = "This browser isn't allowing saved data (it may be in private mode). Use Export instead.";
     return;
   }
   $("saveMsg").textContent = existing ? `Updated "${name}".` : `Saved "${name}" on this computer.`;
+  setLastLoaded(name, state.holdings.filter((h) => h.status === "ok" || h.status === "cash"));
   renderSaved();
 }
 
