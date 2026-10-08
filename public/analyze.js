@@ -189,8 +189,10 @@ const ret = (s, k) => {
 
 // ---------------------------------------------------------------- holdings
 
-async function loadHoldings(list, sourceLabel) {
+async function loadHoldings(list, sourceLabel, name = "") {
   state.holdings = list;
+  $("saveName").value = name;
+  $("saveMsg").textContent = "";
   state.analysis = null;
   $("results").hidden = true;
   $("swapMsg").innerHTML = "";
@@ -199,6 +201,7 @@ async function loadHoldings(list, sourceLabel) {
   $("swap").hidden = true;
   $("holdNote").textContent = sourceLabel;
   renderHoldings();
+  renderSectors();
 
   const syms = [...new Set(list.filter((h) => !h.isCash).map((h) => h.symbol).concat(BENCH))];
   $("progress").textContent = `Loading price history: 0 of ${syms.length}`;
@@ -228,6 +231,7 @@ async function loadHoldings(list, sourceLabel) {
   }
   $("progress").textContent = "";
   renderHoldings();
+  renderSectors();
 
   const missing = state.holdings.filter((h) => h.status === "nodata");
   const limited = missing.filter((h) => loaded[h.symbol] && loaded[h.symbol].rateLimited);
@@ -599,7 +603,9 @@ function readFile(file) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      loadHoldings(holdingsFromCSV(String(reader.result)), `From ${file.name}`);
+      const text = String(reader.result);
+      if (/\.json$/i.test(file.name) || /^\s*\{/.test(text)) importPortfolios(text);
+      else loadHoldings(holdingsFromCSV(text), `From ${file.name}`);
     } catch (e) {
       $("loadMsg").innerHTML = `<div class="error">${esc(e.message)}</div>`;
     }
@@ -627,3 +633,235 @@ $("buyIn").addEventListener("keydown", (e) => { if (e.key === "Enter") runSwap()
 $("taxIn").addEventListener("change", () => { if (state.analysis) { renderTax(); renderProjection(); } });
 seg("periodSeg", "period", renderBacktest);
 seg("horizonSeg", "horizon", renderProjection);
+
+
+// ---------------------------------------------------------------- sector chart
+
+function renderSectors() {
+  const hs = state.holdings.filter((h) => h.value > 0);
+  const total = hs.reduce((a, h) => a + h.value, 0);
+  if (!total) { $("sectorBlock").hidden = true; return; }
+  const agg = {};
+  for (const h of hs) {
+    const sec = sectorFor(h);
+    (agg[sec] ||= { value: 0, syms: [] }).value += h.value;
+    agg[sec].syms.push(h.symbol);
+  }
+  const rows = Object.entries(agg).map(([sector, v]) => ({ sector, ...v, w: v.value / total })).sort((a, b) => b.value - a.value);
+  $("sectorBlock").hidden = false;
+  $("sectorBox").style.height = rows.length * 32 + 36 + "px";
+
+  // Percent labels at the end of each bar, so the chart reads without hovering.
+  const endLabels = {
+    id: "endLabels",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      const meta = chart.getDatasetMeta(0);
+      ctx.save();
+      ctx.font = "500 12px 'Instrument Sans', system-ui, sans-serif";
+      ctx.fillStyle = "#52606D";
+      ctx.textBaseline = "middle";
+      meta.data.forEach((bar, i) => ctx.fillText(rows[i].w < 0.0005 ? "<0.1%" : pct(rows[i].w, 1, false), bar.x + 6, bar.y));
+      ctx.restore();
+    },
+  };
+
+  if (state.charts.sectorChart) state.charts.sectorChart.destroy();
+  state.charts.sectorChart = new Chart($("sectorChart"), {
+    type: "bar",
+    data: {
+      labels: rows.map((r) => r.sector),
+      datasets: [{ data: rows.map((r) => r.w * 100), backgroundColor: C.cur, hoverBackgroundColor: "#2F6696", borderRadius: 4, borderSkipped: "start", barThickness: 16 }],
+    },
+    options: {
+      indexAxis: "y", responsive: true, maintainAspectRatio: false, animation: false,
+      layout: { padding: { right: 48 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (c) => `${usd(rows[c.dataIndex].value)} (${pct(rows[c.dataIndex].w, 1, false)})`,
+            afterLabel: (c) => {
+              const s = rows[c.dataIndex].syms;
+              return s.length > 10 ? s.slice(0, 10).join(", ") + ` and ${s.length - 10} more` : s.join(", ");
+            },
+          },
+        },
+      },
+      scales: {
+        x: { beginAtZero: true, grid: { color: "#E6EBF0" }, border: { display: false }, ticks: { color: "#52606D", font: { family: "Instrument Sans" }, callback: (v) => v + "%" } },
+        y: { grid: { display: false }, border: { display: false }, ticks: { color: "#102A43", font: { family: "Instrument Sans", size: 13 } } },
+      },
+    },
+    plugins: [endLabels],
+  });
+
+  $("sectorTable").innerHTML = `<thead><tr><th>Sector</th><th class="num">Value</th><th class="num">Weight</th><th>Holdings</th></tr></thead><tbody>${
+    rows.map((r) => `<tr><td>${esc(r.sector)}</td><td class="num">${usd(r.value)}</td><td class="num">${pct(r.w, 1, false)}</td><td>${esc(r.syms.join(", "))}</td></tr>`).join("")
+  }</tbody>`;
+}
+
+// ---------------------------------------------------------------- saved portfolios
+// Kept in this browser's localStorage. Nothing is sent to a server. To move
+// portfolios to another computer, export them to a file and open it there.
+
+const STORE_KEY = "pb500.portfolios.v1";
+const FILE_TAG = "portfolio-builder-500";
+
+function readSaved() {
+  try {
+    const v = JSON.parse(localStorage.getItem(STORE_KEY) || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch { return []; }
+}
+
+function writeSaved(list) {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(list)); return true; }
+  catch { return false; }
+}
+
+// Stores shares and cost basis, not today's value, so reopening a saved
+// portfolio values it at the latest prices.
+function snapshot() {
+  return state.holdings.map((h) => ({
+    symbol: h.symbol,
+    name: h.name || "",
+    shares: h.shares ?? null,
+    value: h.isCash || h.shares == null ? h.value ?? null : null,
+    cost: h.cost != null ? h.cost : h.gain != null && h.value != null ? h.value - h.gain : null,
+    isCash: !!h.isCash,
+  }));
+}
+
+const finiteOrNull = (v) => (typeof v === "number" && isFinite(v) ? v : null);
+
+function cleanPortfolio(p) {
+  if (!p || typeof p.name !== "string" || !Array.isArray(p.holdings)) return null;
+  const holdings = p.holdings
+    .filter((h) => h && typeof h.symbol === "string" && /^[A-Z0-9.\-]{1,12}$/i.test(h.symbol))
+    .map((h) => ({
+      symbol: cleanSym(h.symbol), name: typeof h.name === "string" ? h.name.slice(0, 120) : "",
+      shares: finiteOrNull(h.shares), value: finiteOrNull(h.value), cost: finiteOrNull(h.cost), isCash: !!h.isCash,
+    }))
+    .filter((h) => h.shares != null || h.value != null);
+  if (!holdings.length) return null;
+  return {
+    id: typeof p.id === "string" ? p.id : String(Date.now() + Math.random()),
+    name: p.name.trim().slice(0, 80) || "Untitled",
+    savedAt: typeof p.savedAt === "string" && !isNaN(Date.parse(p.savedAt)) ? p.savedAt : new Date().toISOString(),
+    holdings,
+  };
+}
+
+function saveCurrent() {
+  const name = $("saveName").value.trim();
+  if (!state.holdings.length) return;
+  if (!name) { $("saveMsg").textContent = "Give the portfolio a name first."; $("saveName").focus(); return; }
+  const list = readSaved();
+  const existing = list.find((p) => p.name.toLowerCase() === name.toLowerCase());
+  const entry = { id: existing ? existing.id : String(Date.now()), name, savedAt: new Date().toISOString(), holdings: snapshot() };
+  const next = existing ? list.map((p) => (p === existing ? entry : p)) : [entry, ...list];
+  if (!writeSaved(next)) {
+    $("saveMsg").textContent = "This browser isn't allowing saved data (it may be in private mode). Use Export instead.";
+    return;
+  }
+  $("saveMsg").textContent = existing ? `Updated "${name}".` : `Saved "${name}" on this computer.`;
+  renderSaved();
+}
+
+function openSaved(id) {
+  const p = readSaved().find((x) => x.id === id);
+  if (!p) return;
+  const holdings = p.holdings.map((h) => ({ ...h, gain: null }));
+  const when = new Date(p.savedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  loadHoldings(holdings, `Saved ${when}, valued at the latest prices`, p.name);
+  $("holdings").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+}
+
+function deleteSaved(id) {
+  writeSaved(readSaved().filter((p) => p.id !== id));
+  renderSaved();
+}
+
+function slug(s) {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "portfolio";
+}
+
+function download(filename, obj) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportPortfolios(list, filename) {
+  download(filename, { app: FILE_TAG, version: 1, exportedAt: new Date().toISOString(), portfolios: list });
+}
+
+function importPortfolios(text) {
+  let data;
+  try { data = JSON.parse(text); } catch { throw new Error("This file isn't a portfolio file from this page."); }
+  const incoming = (Array.isArray(data.portfolios) ? data.portfolios : [data]).map(cleanPortfolio).filter(Boolean);
+  if (!incoming.length) throw new Error("No portfolios found in this file.");
+  const list = readSaved();
+  let added = 0, updated = 0;
+  for (const p of incoming) {
+    const i = list.findIndex((x) => x.name.toLowerCase() === p.name.toLowerCase());
+    if (i < 0) { list.unshift(p); added++; }
+    else if (Date.parse(p.savedAt) >= Date.parse(list[i].savedAt)) { list[i] = { ...p, id: list[i].id }; updated++; }
+  }
+  const ok = writeSaved(list);
+  renderSaved();
+  if (incoming.length === 1) {
+    const p = ok ? readSaved().find((x) => x.name.toLowerCase() === incoming[0].name.toLowerCase()) : incoming[0];
+    if (ok) openSaved(p.id);
+    else loadHoldings(p.holdings.map((h) => ({ ...h, gain: null })), "Opened from file", p.name);
+  } else {
+    $("loadMsg").innerHTML = ok
+      ? `<div class="warnbox">Added ${added} and updated ${updated} saved portfolio${added + updated === 1 ? "" : "s"}${incoming.length - added - updated ? `; ${incoming.length - added - updated} older cop${incoming.length - added - updated === 1 ? "y was" : "ies were"} skipped` : ""}. Open one from the list.</div>`
+      : `<div class="error">This browser isn't allowing saved data, so the portfolios couldn't be added.</div>`;
+  }
+}
+
+function renderSaved() {
+  const list = readSaved();
+  $("exportAll").hidden = !list.length;
+  if (!list.length) {
+    $("savedList").innerHTML = `<li class="note">No saved portfolios yet. Load one, give it a name, and click Save portfolio.</li>`;
+    return;
+  }
+  $("savedList").innerHTML = list.map((p) => {
+    const when = new Date(p.savedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    return `<li data-id="${esc(p.id)}">
+      <span class="pname">${esc(p.name)}<span class="pmeta">${p.holdings.length} holdings, saved ${when}</span></span>
+      <span class="actions">
+        <button class="ghost" type="button" data-act="open">Open</button>
+        <button class="ghost" type="button" data-act="export">Export</button>
+        <button class="ghost danger" type="button" data-act="delete">Delete</button>
+      </span>
+    </li>`;
+  }).join("");
+}
+
+$("savedList").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const id = b.closest("li").dataset.id;
+  const p = readSaved().find((x) => x.id === id);
+  if (!p) return;
+  if (b.dataset.act === "open") openSaved(id);
+  else if (b.dataset.act === "export") exportPortfolios([p], `${slug(p.name)}.portfolio.json`);
+  else if (b.dataset.act === "delete") {
+    if (b.dataset.confirm) deleteSaved(id);
+    else { b.dataset.confirm = "1"; b.textContent = "Confirm delete"; setTimeout(() => { if (b.isConnected) { delete b.dataset.confirm; b.textContent = "Delete"; } }, 4000); }
+  }
+});
+$("exportAll").addEventListener("click", () => {
+  const list = readSaved();
+  if (list.length) exportPortfolios(list, `portfolios-${new Date().toISOString().slice(0, 10)}.json`);
+});
+$("saveBtn").addEventListener("click", saveCurrent);
+$("saveName").addEventListener("keydown", (e) => { if (e.key === "Enter") saveCurrent(); });
+renderSaved();

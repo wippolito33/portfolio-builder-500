@@ -45,3 +45,7 @@ The free plan allows 50 requests an hour and 1,000 a day. To stay well under tha
 - **Tiingo** (`TIINGO_KEY`): live prices, and price history first. Free plan: 50 requests/hour, 1,000/day. History includes dividends.
 - **Twelve Data** (`TWELVEDATA_KEY`): price history once Tiingo's hourly limit is reached. Free plan: 8 requests/minute, 800/day. Asks for dividend-adjusted prices; if the plan doesn't allow that, uses split-adjusted prices and the page flags the stock as "No dividends".
 - Both keys are Netlify environment variables (Site configuration -> Environment variables). Changing a key requires a redeploy.
+
+## Sectors and saved portfolios
+- The sector chart uses the ticker list in `public/sectors.js` (GICS sectors for stocks; funds grouped as U.S. stock, international stock, or bond funds). Unlisted tickers show as "Other"; add them there.
+- Saved portfolios live in the browser's local storage on that computer only (shares and cost basis, revalued at the latest prices when reopened). Export creates a `.json` file that can be opened on another computer from the same file picker. Nothing is stored on a server.

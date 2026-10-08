@@ -96,6 +96,20 @@
   .error { background: #FBE9E7; color: var(--loss); border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
   .warnbox { background: #FBEFD9; color: #6B4510; border-radius: 8px; padding: 12px 16px; margin: 12px 0; font-size: 0.9375rem; }
   .progress { color: var(--slate); font-size: 0.9375rem; margin: 12px 0; }
+  .saved { margin-top: 24px; }
+  .saved h3 { margin: 0; }
+  #savedList { list-style: none; padding: 0; margin: 12px 0; }
+  #savedList li { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--rule); }
+  #savedList li:first-child { border-top: 0; }
+  #savedList .pname { font-weight: 600; flex: 1 1 200px; }
+  #savedList .pmeta { color: var(--slate); font-size: 0.8125rem; display: block; font-weight: 400; }
+  #savedList .actions { display: flex; gap: 8px; }
+  button.ghost.danger { color: var(--loss); }
+  button.ghost.danger:hover { border-color: var(--loss); }
+  .savebar { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin: 12px 0 20px; }
+  .savebar input { width: 260px; max-width: 100%; }
+  .sector-box { position: relative; }
+  details summary { cursor: pointer; color: var(--ink); font-weight: 500; }
   [hidden] { display: none !important; }
 
   footer { border-top: 1px solid var(--rule); padding: 20px 0 40px; font-size: 0.8125rem; color: var(--slate); }
@@ -122,15 +136,15 @@
 
   <section id="load">
     <h2>Load a portfolio</h2>
-    <p class="lede">Import a positions file from your custodian, or type holdings in. The file is read in your browser and is never uploaded or stored.</p>
+    <p class="lede">Import a positions file from your custodian, type holdings in, or open one you've saved. Files are read in your browser and never uploaded to a server.</p>
     <div class="load">
       <div class="panel">
         <h3>Import a CSV</h3>
-        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose a CSV file">
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose a positions file or saved portfolio file">
           <strong>Choose a positions file</strong> or drag it here<br />
-          <span class="note">Works with RBC exports and any CSV with Symbol and Quantity columns</span>
+          <span class="note">Works with RBC exports, any CSV with Symbol and Quantity columns, and portfolio files exported from this page</span>
         </div>
-        <input type="file" id="file" accept=".csv,text/csv" hidden />
+        <input type="file" id="file" accept=".csv,text/csv,.json,application/json" hidden />
         <p class="note" id="fileName"></p>
       </div>
       <div class="panel">
@@ -141,6 +155,14 @@
         <p style="margin:12px 0 0"><button class="primary" id="manualBtn" type="button">Load holdings</button></p>
       </div>
     </div>
+    <div class="panel saved" id="savedPanel">
+      <div class="row-head">
+        <h3>Saved portfolios</h3>
+        <button class="ghost" id="exportAll" type="button">Export all</button>
+      </div>
+      <ul id="savedList"></ul>
+      <p class="note" id="savedNote">Saved portfolios are kept in this browser on this computer only. To use them on another computer, export them and open the file there.</p>
+    </div>
     <div id="loadMsg"></div>
   </section>
 
@@ -149,8 +171,20 @@
       <h2>Holdings</h2>
       <span class="note" id="holdNote"></span>
     </div>
+    <div class="savebar">
+      <label class="field" for="saveName">Portfolio name
+        <input type="text" id="saveName" maxlength="80" autocomplete="off" placeholder="e.g. Smith IRA" />
+      </label>
+      <button class="primary" id="saveBtn" type="button">Save portfolio</button>
+      <span class="note" id="saveMsg" role="status"></span>
+    </div>
     <div class="summary" id="summary"></div>
     <div class="progress" id="progress"></div>
+    <div id="sectorBlock" hidden>
+      <h3>By sector</h3>
+      <div class="sector-box" id="sectorBox"><canvas id="sectorChart" aria-label="Portfolio weight by sector"></canvas></div>
+      <details class="note" style="margin:4px 0 16px"><summary>Sector table</summary><div class="table-scroll" style="margin-top:8px"><table id="sectorTable"></table></div></details>
+    </div>
     <div class="table-scroll">
       <table>
         <thead><tr><th>Holding</th><th class="num">Shares</th><th class="num">Value</th><th class="num">Weight</th><th class="num">Unrealized gain</th><th class="num">5-yr return</th><th>Data</th></tr></thead>
@@ -222,6 +256,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="sectors.js"></script>
 <script src="analyze.js"></script>
 </body>
 </html>
