@@ -214,7 +214,7 @@ function render() {
   ]);
   const s = cur.sec;
   $("periodNote").textContent = `${keyLabel(cur.startK)} to ${keyLabel(cur.endK)}. The sector portfolio dropped ${s.dropped.join(" and ")}` +
-    (s.missing.length ? `; ${s.missing.join(", ")} ${s.missing.length === 1 ? "wasn't" : "weren't"} public yet, so it held ${s.held}.` : ".");
+    (s.missing.length ? `; ${s.missing.map((m) => `${m} (${START_NOTES[m] || "trading since " + keyLabel(DATA.series[m] ? DATA.series[m].first : cur.startK)})`).join(", ")} ${s.missing.length === 1 ? "has" : "have"} no price history that far back, so it held ${s.held}.` : ".");
 
   const row = (label, f, c) => `<tr><td>${label}</td>${cols.map(([k]) => `<td class="num ${c ? cls(c(cur[k])) : ""}">${f(cur[k])}</td>`).join("")}</tr>`;
   $("riskTable").innerHTML = `

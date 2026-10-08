@@ -74,10 +74,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const WAIT_SECONDS = 60;  // Twelve Data's per-minute limit resets every minute
 const MAX_WAITS = 8;
 
-function toSeries(pts) {
+// Why a stock's price history starts when it does (shown instead of a bare date).
+const START_NOTES = {
+  CEG: "spun off from Exelon in Feb 2022",
+  GEV: "spun off from GE in Apr 2024",
+  META: "IPO in May 2012",
+  KVUE: "IPO in May 2023",
+  VLTO: "spun off from Danaher in Oct 2023",
+  SOLV: "spun off from 3M in Apr 2024",
+  CRWD: "IPO in Jun 2019",
+  PLTR: "listed in Sep 2020",
+  UBER: "IPO in May 2019",
+  ABNB: "IPO in Dec 2020",
+  CBRS: "IPO in 2025",
+};
+
+function toSeries(pts, meta) {
   const m = new Map();
   for (const pt of pts) m.set(monthKey(pt.t), pt.p);
-  return { map: m, first: Math.min(...m.keys()), last: Math.max(...m.keys()) };
+  return { map: m, first: Math.min(...m.keys()), last: Math.max(...m.keys()), chainNote: (meta && meta.chainNote) || null };
 }
 
 async function fetchOneHistory(sym) {
@@ -85,7 +100,7 @@ async function fetchOneHistory(sym) {
     const r = await fetch("/api/history?symbols=" + encodeURIComponent(sym));
     const d = await r.json().catch(() => null);
     const pts = d && d.series && d.series[sym];
-    if (Array.isArray(pts) && pts.length > 1) return { series: toSeries(pts) };
+    if (Array.isArray(pts) && pts.length > 1) return { series: toSeries(pts, d.meta && d.meta[sym]) };
     const err = (pts && pts.error) || (d && d.message) || `HTTP ${r.status}`;
     return { error: err, rateLimited: !!((pts && pts.rateLimited) || (d && d.rateLimited) || r.status === 429) };
   } catch (e) {
@@ -113,7 +128,7 @@ async function loadHistory() {
       try {
         const r = await fetch("/api/history?symbols=" + encodeURIComponent(syms.join(",")));
         const d = await r.json().catch(() => null);
-        if (d && d.series) for (const [s, pts] of Object.entries(d.series)) if (Array.isArray(pts) && pts.length > 1) maps[s] = toSeries(pts);
+        if (d && d.series) for (const [s, pts] of Object.entries(d.series)) if (Array.isArray(pts) && pts.length > 1) maps[s] = toSeries(pts, d.meta && d.meta[s]);
       } catch { /* fall through to one at a time */ }
       renderAll();
     }
@@ -177,7 +192,7 @@ function backtest(years) {
   const rows = holdingsList().map((h) => {
     const s = H[h.symbol];
     if (!s) return { ...h, status: "nodata", ret: null };
-    if (s.first > startK) return { ...h, status: "na", ret: null };
+    if (s.first > startK) return { ...h, series: s, status: "na", ret: null };
     const p0 = priceAt(s, startK), p1 = priceAt(s, endK);
     return { ...h, series: s, p0, ret: p1 / p0 - 1, status: "held" };
   });
@@ -209,10 +224,10 @@ function backtest(years) {
 function renderHero(bt) {
   const s = bt.strategy;
   const joinAnd = (a) => a.length < 2 ? a.join("") : a.slice(0, -1).join(", ") + " and " + a.at(-1);
-  const missing = bt.missing.map((m) => m.symbol);
+  const missing = bt.missing.map((m) => `${m.symbol} (${START_NOTES[m.symbol] || "trading since " + keyLabel(m.series.first)})`);
   const nodata = bt.nodata.map((m) => m.symbol);
   const reasons = [];
-  if (missing.length) reasons.push(`${joinAnd(missing)} ${missing.length === 1 ? "wasn't" : "weren't"} public yet`);
+  if (missing.length) reasons.push(`${joinAnd(missing)} ${missing.length === 1 ? "has" : "have"} no price history that far back`);
   if (nodata.length) reasons.push(`price history for ${joinAnd(nodata)} hasn't loaded`);
   const weightNote = bt.held.length === 20
     ? "Holds 20 stocks at 5% each."
@@ -283,11 +298,11 @@ function renderTable(bt) {
       const r = byRow[h.symbol] || {};
       const tag = r.status === "held" ? `<span class="tag held">Held, ${(r.weight * 100).toFixed(r.weight === 0.05 ? 0 : 2)}%</span>`
         : r.status === "dropped" ? `<span class="tag dropped">Dropped, bottom 2</span>`
-        : r.status === "na" ? `<span class="tag na">Not public yet</span>`
+        : r.status === "na" ? `<span class="tag na" title="${START_NOTES[r.symbol] || ""}">Starts ${keyLabel(r.series.first)}</span>`
         : r.status === "nodata" ? `<span class="tag dropped">Data not loaded</span>` : "";
       html += `<tr class="${i === 0 ? "sector-start" : ""} ${r.status === "dropped" ? "is-dropped" : ""}">
         <td class="sector">${i === 0 ? s.sector : ""}</td>
-        <td><span class="tick">${h.symbol}</span><span class="name">${h.name || ""}</span></td>
+        <td><span class="tick">${h.symbol}</span><span class="name">${h.name || ""}</span>${state.history && state.history[h.symbol] && state.history[h.symbol].chainNote ? `<span class="name">History includes ${state.history[h.symbol].chainNote}</span>` : ""}</td>
         <td class="num">${fmtUSD(h.price, 2)}</td>
         <td class="num ${cls(h.changePct)}">${h.changePct == null ? "—" : fmtPct(h.changePct / 100, 2)}</td>
         <td class="num ${cls(r.ret)}">${fmtPct(r.ret, 0)}</td>

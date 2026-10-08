@@ -26,7 +26,7 @@ export default async (req) => {
   for (const [s, r] of results) {
     if (r.points) {
       series[s] = r.points;
-      meta[s] = { source: r.source, adjusted: r.adjusted, fetchedAt: r.fetchedAt };
+      meta[s] = { source: r.source, adjusted: r.adjusted, fetchedAt: r.fetchedAt, ...(r.chainedFrom ? { chainedFrom: r.chainedFrom, chainNote: r.chainNote } : {}) };
     } else {
       failed++;
       limited = limited || !!r.rateLimited;

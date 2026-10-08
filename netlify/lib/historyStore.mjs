@@ -16,6 +16,32 @@ import { getHistoryTD, tdKey } from "./twelvedata.mjs";
 
 export const FRESH_MS = 20 * 60 * 60 * 1000;
 
+// Stocks whose ticker began with a merger, so their earlier history lives
+// under the predecessor's ticker. The predecessor's monthly returns are
+// joined on before the first month of the current ticker.
+//   LIN: Linde plc was formed on 31 Oct 2018 from Praxair (PX) and Linde AG;
+//        each Praxair share became one Linde plc share.
+// (Spin-offs such as CEG from Exelon are NOT listed: the parent company is a
+// different business, so there is no earlier history to join.)
+export const PREDECESSORS = {
+  LIN: { symbol: "PX", note: "Praxair (PX) before the Oct 2018 Linde merger" },
+};
+const RETRY_CHAIN_MS = 7 * 24 * 60 * 60 * 1000;
+
+const monthOf = (t) => { const d = new Date(t); return d.getUTCFullYear() * 12 + d.getUTCMonth(); };
+
+// Joins predecessor history onto the front of a series, scaled so returns
+// carry straight through the changeover month.
+export function chainHistory(points, prePoints) {
+  if (!points.length || !prePoints.length) return null;
+  const firstK = monthOf(points[0].t);
+  const before = prePoints.filter((p) => monthOf(p.t) < firstK);
+  const at = prePoints.filter((p) => monthOf(p.t) <= firstK).pop();
+  if (!before.length || !at || firstK - monthOf(at.t) > 2) return null;
+  const scale = points[0].p / at.p;
+  return [...before.map((p) => ({ t: p.t, p: p.p * scale })), ...points];
+}
+
 let store; // undefined = not tried yet, false = unavailable (e.g. local tests)
 function blobStore() {
   if (store === undefined) {
@@ -94,14 +120,27 @@ async function fetchFromProviders(sym) {
 // Returns { points, source, adjusted, fetchedAt } or { error, rateLimited }.
 // force: refresh even if the saved copy is still fresh (used by the daily job).
 export async function getSeries(sym, { force = false } = {}) {
+  const pre = PREDECESSORS[sym.toUpperCase()];
   const stored = await readStored(sym);
-  if (stored && !force && Date.now() - stored.fetchedAt < FRESH_MS) return stored;
+  const needsChain = pre && stored && !stored.chainedFrom && !(stored.chainTriedAt && Date.now() - stored.chainTriedAt < RETRY_CHAIN_MS);
+  if (stored && !force && !needsChain && Date.now() - stored.fetchedAt < FRESH_MS) return stored;
 
   const r = await fetchFromProviders(sym);
   if (r.points) {
     // Don't replace dividend-adjusted history with history that isn't.
     if (stored && stored.adjusted && r.adjusted === false) return stored;
     const rec = { points: r.points, source: r.source, adjusted: r.adjusted !== false, fetchedAt: Date.now() };
+    if (pre) {
+      // Reuse the predecessor's saved history when we have it: it never changes.
+      let prePoints = stored && stored.chainedFrom ? stored.prePoints : null;
+      if (!prePoints) {
+        const p = await fetchFromProviders(pre.symbol);
+        if (p.points && p.adjusted !== false) prePoints = p.points;
+      }
+      const joined = prePoints && chainHistory(r.points, prePoints);
+      if (joined) Object.assign(rec, { points: joined, prePoints, chainedFrom: pre.symbol, chainNote: pre.note });
+      else rec.chainTriedAt = Date.now();
+    }
     await writeStored(sym, rec);
     return rec;
   }

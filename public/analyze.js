@@ -144,7 +144,7 @@ function renderHoldings() {
       if (a && b) r5 = b / a - 1;
     }
     const tag = h.isCash ? `<span class="tag">Cash</span>`
-      : h.status === "ok" ? `<span class="tag">Since ${keyLabel(s.first)}</span>${s.adjusted ? "" : ` <span class="tag warn" title="Twelve Data history without dividends">No dividends</span>`}`
+      : h.status === "ok" ? `<span class="tag" title="${esc(s.chainNote ? "Includes " + s.chainNote : START_NOTES[h.symbol] || "")}">Since ${keyLabel(s.first)}</span>${s.adjusted ? "" : ` <span class="tag warn" title="Twelve Data history without dividends">No dividends</span>`}`
       : h.status === "nodata" ? `<span class="tag warn" title="${esc(h.error)}">No data</span>`
       : `<span class="tag">Loading</span>`;
     return `<tr class="${h.symbol === sel ? "selected" : ""}">

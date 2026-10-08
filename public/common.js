@@ -134,7 +134,7 @@ async function fetchSeries(sym) {
   const m = (data.meta && data.meta[sym]) || {};
   return (DATA.series[sym] = {
     map, first: Math.min(...keys), last: Math.max(...keys), lastPrice: pts[pts.length - 1].p,
-    source: m.source || "tiingo", adjusted: m.adjusted !== false,
+    source: m.source || "tiingo", adjusted: m.adjusted !== false, chainNote: m.chainNote || null,
   });
 }
 
@@ -286,6 +286,21 @@ function weightedReturns(holdings, startK, endK) {
     .reduce((a, h) => a + h.value, 0);
   return { rets, coverage: total ? covered / total : 0 };
 }
+
+// Why a stock's price history starts when it does (shown instead of a bare date).
+const START_NOTES = {
+  CEG: "spun off from Exelon in Feb 2022",
+  GEV: "spun off from GE in Apr 2024",
+  META: "IPO in May 2012",
+  KVUE: "IPO in May 2023",
+  VLTO: "spun off from Danaher in Oct 2023",
+  SOLV: "spun off from 3M in Apr 2024",
+  CRWD: "IPO in Jun 2019",
+  PLTR: "listed in Sep 2020",
+  UBER: "IPO in May 2019",
+  ABNB: "IPO in Dec 2020",
+  CBRS: "IPO in 2025",
+};
 
 const PERIODS = [1, 3, 5, 10, 20];
 const periodLabel = (y) => (y === 1 ? "1 year" : `${y} years`);
