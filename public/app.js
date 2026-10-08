@@ -6,8 +6,27 @@ const REFRESH_MS = 5 * 60_000; // prices are cached for 5 minutes on the server
 const COLORS = { strategy: "#B7791F", all: "#52606D", bench: "#102A43" };
 
 const state = { years: 10, portfolio: null, history: null, historyKey: "", chart: null, pie: null, mixView: "start" };
-// Alternating tones of one blue: slices are identified by their labels, not color.
-const PIE_TONES = ["#2F6696", "#6FA0CC", "#A9C8E4"];
+// One fixed color per sector, so a sector keeps its color in every view.
+// Ordered so neighbors in the standard sector order stay distinct (checked for
+// color-blind separation); slices are also labeled, so color is never the only cue.
+const SECTOR_COLORS = {
+  "Information Technology": "#2a78d6",
+  "Communication Services": "#eb6834",
+  "Consumer Discretionary": "#1baf7a",
+  "Financials": "#eda100",
+  "Health Care": "#e87ba4",
+  "Consumer Staples": "#008300",
+  "Energy": "#4a3aa7",
+  "Industrials": "#e34948",
+  "Materials": "#13a3c6",
+  "Utilities": "#9a6b00",
+  "Real Estate": "#b45fb0",
+};
+// Dark or white text, whichever reads better on a slice color.
+function textOn(hex) {
+  const n = parseInt(hex.slice(1), 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? "#102A43" : "#FFFFFF";
+}
 
 const $ = (id) => document.getElementById(id);
 const fmtUSD = (v, d = 0) => v == null ? "—" : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: d, minimumFractionDigits: d });
@@ -242,7 +261,7 @@ function renderMix(bt) {
     ? `${bt.held.length} stocks at ${(100 / bt.held.length).toFixed(bt.held.length === 20 ? 0 : 2)}% each, ${bt.years === 1 ? "a year" : bt.years + " years"} ago. Sectors that lost a stock to the bottom-two cut (${dropped.join(", ")}) or to a later listing hold less.`
     : `Where the money sits today after ${bt.years === 1 ? "a year" : bt.years + " years"} of buy-and-hold with no rebalancing. Winners grow into bigger slices.`;
 
-  const colors = rows.map((_, i) => PIE_TONES[i % PIE_TONES.length]);
+  const colors = rows.map((r) => SECTOR_COLORS[r.sector] || "#8A96A3");
   const narrow = () => $("pie").parentElement.clientWidth < 640;
   const outside = {
     id: "outsideLabels",
@@ -255,8 +274,8 @@ function renderMix(bt) {
         ctx.font = "600 11px 'Instrument Sans', system-ui, sans-serif";
         ctx.textAlign = "center"; ctx.textBaseline = "middle";
         arcs.forEach((arc, i) => {
-          const a = (arc.startAngle + arc.endAngle) / 2, rr = (arc.innerRadius + arc.outerRadius) / 2;
-          ctx.fillStyle = i % PIE_TONES.length === 2 ? "#102A43" : "#FFFFFF";
+          const a = (arc.startAngle + arc.endAngle) / 2, rr = arc.outerRadius * 0.66;
+          ctx.fillStyle = textOn(colors[i]);
           ctx.fillText(`${Math.round(rows[i].w * 100)}%`, arc.x + Math.cos(a) * rr, arc.y + Math.sin(a) * rr);
         });
         ctx.restore();
@@ -284,9 +303,9 @@ function renderMix(bt) {
   if (state.pie) state.pie.destroy();
   state.pie = new Chart($("pie"), {
     type: "doughnut",
-    data: { labels: rows.map((r) => r.sector), datasets: [{ data: rows.map((r) => r.w * 100), backgroundColor: colors, borderColor: "#F6F8F7", borderWidth: 2, hoverOffset: 6 }] },
+    data: { labels: rows.map((r) => r.sector), datasets: [{ data: rows.map((r) => r.w * 100), backgroundColor: colors, borderColor: "#F6F8F7", borderWidth: 2, hoverOffset: 8 }] },
     options: {
-      responsive: true, maintainAspectRatio: false, animation: false, cutout: "55%",
+      responsive: true, maintainAspectRatio: false, animation: false, cutout: 0,
       layout: { padding: narrow() ? 8 : { top: 30, bottom: 30, left: 200, right: 200 } },
       plugins: {
         legend: { display: false },
