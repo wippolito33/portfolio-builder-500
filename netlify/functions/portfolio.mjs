@@ -1,11 +1,14 @@
 // GET /api/portfolio
 // Ranks the largest S&P 500 names in each of the 11 GICS sectors by LIVE
 // market cap and returns the top two per sector (22 stocks), with live prices.
-import { getQuotes, getChart, json } from "../lib/yahoo.mjs";
+//
+// Tiingo's free tier does not provide market cap, so sector ranking uses the
+// curated size-ordered list below (reviewed once or twice a year). Live prices
+// and today's change come from Tiingo.
+import { getQuotes, getMeta, json, key } from "../lib/tiingo.mjs";
 
-// Candidate pool: the largest S&P 500 constituents in each sector.
-// Listed in approximate size order, which is only used as a fallback if
-// Yahoo's market-cap feed is unavailable. Review once or twice a year.
+// Candidate pool: the largest S&P 500 constituents in each sector, in
+// approximate size order. The top two per sector are selected.
 export const SECTORS = {
   "Information Technology": ["NVDA", "MSFT", "AAPL", "AVGO", "ORCL", "PLTR", "AMD", "CSCO", "IBM", "CRM", "MU"],
   "Communication Services": ["GOOGL", "META", "NFLX", "TMUS", "DIS", "T", "VZ"],
@@ -20,48 +23,42 @@ export const SECTORS = {
   "Real Estate": ["WELL", "PLD", "AMT", "EQIX", "SPG", "O"],
 };
 
+// Only the two picks per sector need names/prices, so build that list first.
+const PICKS = Object.values(SECTORS).map((s) => s.slice(0, 2));
+
 export default async () => {
-  const all = Object.values(SECTORS).flat();
-  let quotes = null;
-  let source = "yahoo-live";
   try {
-    quotes = await getQuotes(all);
+    key();
+  } catch {
+    return json({ error: "NO_KEY", message: "Tiingo API key not set. Add TIINGO_KEY in Netlify environment variables and redeploy." }, 500, 0);
+  }
+
+  const picks = PICKS.flat();
+  let quotes = [];
+  try {
+    quotes = await getQuotes(picks);
   } catch (e) {
-    source = "fallback-order"; // market cap unavailable; use list order
+    return json({ error: "QUOTES_FAILED", message: String(e.message || e) }, 502, 0);
   }
-  const bySym = Object.fromEntries((quotes || []).map((q) => [q.symbol, q]));
+  const bySym = Object.fromEntries(quotes.map((q) => [q.symbol, q]));
 
-  const sectors = [];
-  for (const [sector, syms] of Object.entries(SECTORS)) {
-    let ranked = syms.map((s, i) => ({ symbol: s, rank: i, ...(bySym[s] || {}) }));
-    if (source === "yahoo-live" && ranked.every((r) => r.marketCap)) {
-      ranked.sort((a, b) => b.marketCap - a.marketCap);
-    } else if (source === "yahoo-live") {
-      source = "partial";
-      ranked.sort((a, b) => (b.marketCap || 0) - (a.marketCap || 0) || a.rank - b.rank);
-    }
-    sectors.push({ sector, holdings: ranked.slice(0, 2) });
-  }
+  // Names come from metadata; fetch in parallel, tolerate individual failures.
+  const metas = await Promise.all(
+    picks.map((s) => getMeta(s).catch(() => ({ symbol: s, name: s })))
+  );
+  const nameBySym = Object.fromEntries(metas.map((m) => [m.symbol, m.name]));
 
-  // If the quote feed failed entirely, still fetch prices via the chart endpoint.
-  if (!quotes) {
-    const picks = sectors.flatMap((s) => s.holdings);
-    await Promise.all(
-      picks.map(async (h) => {
-        try {
-          const c = await getChart(h.symbol, { period1: Math.floor(Date.now() / 1000) - 10 * 86400, interval: "1d" });
-          h.name = c.meta.name;
-          h.price = c.meta.price;
-          if (c.meta.price && c.meta.prevClose) {
-            h.change = c.meta.price - c.meta.prevClose;
-            h.changePct = (h.change / c.meta.prevClose) * 100;
-          }
-        } catch {}
-      })
-    );
-  }
+  const sectors = Object.entries(SECTORS).map(([sector, syms]) => ({
+    sector,
+    holdings: syms.slice(0, 2).map((s) => ({
+      symbol: s,
+      name: nameBySym[s] || s,
+      marketCap: null, // not available on Tiingo free tier
+      ...(bySym[s] || {}),
+    })),
+  }));
 
-  return json({ asOf: new Date().toISOString(), source, sectors }, 200, 30);
+  return json({ asOf: new Date().toISOString(), source: "tiingo-live", sectors }, 200, 30);
 };
 
 export const config = { path: "/api/portfolio" };

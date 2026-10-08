@@ -17,8 +17,11 @@ const keyLabel = (k) => new Date(Date.UTC(Math.floor(k / 12), k % 12, 1)).toLoca
 
 async function getJSON(url) {
   const r = await fetch(url);
-  if (!r.ok) throw new Error(`${url} returned ${r.status}`);
-  return r.json();
+  const data = await r.json().catch(() => null);
+  if (!r.ok || (data && data.error)) {
+    throw new Error((data && data.message) || `${url} returned ${r.status}`);
+  }
+  return data;
 }
 
 function setStatus(kind, text) {
@@ -31,8 +34,7 @@ async function loadPortfolio() {
   const data = await getJSON("/api/portfolio");
   state.portfolio = data;
   const time = new Date(data.asOf).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  if (data.source === "yahoo-live") setStatus("live", `Live from Yahoo Finance, updated ${time}`);
-  else setStatus("warn", `Prices updated ${time}. Market caps unavailable, using saved ranking`);
+  setStatus("live", `Live from Tiingo, updated ${time}`);
   return data;
 }
 
@@ -194,7 +196,6 @@ function renderTable(bt) {
       html += `<tr class="${i === 0 ? "sector-start" : ""} ${r.status === "dropped" ? "is-dropped" : ""}">
         <td class="sector">${i === 0 ? s.sector : ""}</td>
         <td><span class="tick">${h.symbol}</span><span class="name">${h.name || ""}</span></td>
-        <td class="num">${fmtCap(h.marketCap)}</td>
         <td class="num">${fmtUSD(h.price, 2)}</td>
         <td class="num ${cls(h.changePct)}">${h.changePct == null ? "—" : fmtPct(h.changePct / 100, 2)}</td>
         <td class="num ${cls(r.ret)}">${fmtPct(r.ret, 0)}</td>
