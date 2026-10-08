@@ -46,11 +46,6 @@ export async function getQuotes(symbols) {
   });
 }
 
-export async function getMeta(symbol) {
-  const d = await get(`/tiingo/daily/${toTiingo(symbol)}`);
-  return { symbol, name: d.name || symbol, startDate: d.startDate || null, endDate: d.endDate || null };
-}
-
 // Monthly adjusted close (dividends + splits reinvested) for backtests.
 export async function getHistory(symbol, startDate) {
   const rows = await get(`/tiingo/daily/${toTiingo(symbol)}/prices`, {
@@ -63,9 +58,17 @@ export async function getHistory(symbol, startDate) {
     .map((r) => ({ t: Date.parse(r.date), p: r.adjClose }));
 }
 
-export function json(body, status = 200, maxAge = 60) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${maxAge}` },
-  });
+// Tiingo's free plan allows 50 requests/hour and 1,000/day, so responses are
+// cached on Netlify's CDN ("durable" = shared across all edge locations).
+// While a cached copy is fresh, Tiingo is not called at all.
+// cdnSeconds = 0 means "don't cache" (used for errors).
+export function json(body, status = 200, cdnSeconds = 0) {
+  const headers = { "Content-Type": "application/json", "Cache-Control": "public, max-age=0, must-revalidate" };
+  if (status === 200 && cdnSeconds > 0) {
+    headers["Netlify-CDN-Cache-Control"] =
+      `public, durable, s-maxage=${cdnSeconds}, stale-while-revalidate=${cdnSeconds * 2}`;
+  } else {
+    headers["Cache-Control"] = "no-store";
+  }
+  return new Response(JSON.stringify(body), { status, headers });
 }

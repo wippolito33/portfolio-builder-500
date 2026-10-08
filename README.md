@@ -10,7 +10,7 @@ S&P 500 and backtests it against the index.
 3. Drops the two worst performers over each period and holds the remaining 20 at 5% each.
    If a stock wasn't public at the start date, it's excluded and the rest are equal-weighted.
 4. Compares against all 22 equal-weighted and SPY.
-5. Prices refresh every 60 seconds while the page is open.
+5. Prices refresh every 5 minutes while the page is open.
 
 ## Project layout
 - `public/` – the website (index.html, app.js)
@@ -29,3 +29,9 @@ S&P 500 and backtests it against the index.
 - Requires a free Tiingo API key set as the `TIINGO_KEY` environment variable in Netlify
   (Site configuration -> Environment variables). Sign up at tiingo.com.
 - Results are hypothetical and backtested with hindsight. Internal use only; review with compliance before sharing.
+
+## Staying inside Tiingo's free plan
+The free plan allows 50 requests an hour and 1,000 a day. To stay well under that:
+- Live prices use one request for all 22 stocks, cached on Netlify for 5 minutes (at most ~12 an hour).
+- 20-year history uses 23 requests, cached on Netlify for 24 hours.
+- Company names and the 22 holdings are listed in `portfolio.mjs`, so no requests are spent on them.

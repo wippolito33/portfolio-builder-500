@@ -7,7 +7,7 @@ export default async (req) => {
   try {
     key();
   } catch {
-    return json({ error: "NO_KEY", message: "Tiingo API key not set. Add TIINGO_KEY in Netlify environment variables and redeploy." }, 500, 0);
+    return json({ error: "NO_KEY", message: "Tiingo API key not set. Add TIINGO_KEY in Netlify environment variables and redeploy." }, 500);
   }
 
   const url = new URL(req.url);
@@ -16,7 +16,7 @@ export default async (req) => {
     .map((s) => s.trim().toUpperCase())
     .filter((s) => /^[A-Z.\-]{1,10}$/.test(s))
     .slice(0, 40);
-  if (!symbols.length) return json({ error: "Pass ?symbols=AAA,BBB" }, 400, 0);
+  if (!symbols.length) return json({ error: "Pass ?symbols=AAA,BBB" }, 400);
 
   const start = new Date();
   start.setFullYear(start.getFullYear() - 21);
@@ -31,7 +31,19 @@ export default async (req) => {
       }
     })
   );
-  return json({ asOf: new Date().toISOString(), series: Object.fromEntries(results) }, 200, 21600);
+  const failed = results.filter(([, v]) => !Array.isArray(v));
+  if (failed.length === results.length) {
+    // Nothing came back (usually Tiingo's hourly limit). Don't cache this.
+    return json({ error: "HISTORY_FAILED", message: failed[0][1].error }, 502);
+  }
+  // Monthly history barely changes, so a full result is cached for 24 hours
+  // (about 23 Tiingo requests a day). A partial result is cached for only
+  // 10 minutes so the missing stocks get retried soon.
+  return json(
+    { asOf: new Date().toISOString(), series: Object.fromEntries(results) },
+    200,
+    failed.length ? 600 : 86400
+  );
 };
 
 export const config = { path: "/api/history" };

@@ -1,64 +1,62 @@
 // GET /api/portfolio
-// Ranks the largest S&P 500 names in each of the 11 GICS sectors by LIVE
-// market cap and returns the top two per sector (22 stocks), with live prices.
+// Returns the 22 holdings (the two largest S&P 500 stocks in each of the 11
+// sectors) with live prices from Tiingo.
 //
-// Tiingo's free tier does not provide market cap, so sector ranking uses the
-// curated size-ordered list below (reviewed once or twice a year). Live prices
-// and today's change come from Tiingo.
-import { getQuotes, getMeta, json, key } from "../lib/tiingo.mjs";
+// Uses ONE Tiingo request per call, and the result is cached on Netlify's CDN
+// for 5 minutes, so Tiingo is hit at most ~12 times an hour no matter how many
+// times the page is opened or refreshed.
+import { getQuotes, json, key } from "../lib/tiingo.mjs";
 
-// Candidate pool: the largest S&P 500 constituents in each sector, in
-// approximate size order. The top two per sector are selected.
+const QUOTE_CACHE_SECONDS = 300; // 5 minutes
+
+// The two largest S&P 500 stocks in each sector, by market cap.
+// Tiingo's free plan has no market-cap data, so this list is maintained by
+// hand. Review it once or twice a year.
 export const SECTORS = {
-  "Information Technology": ["NVDA", "MSFT", "AAPL", "AVGO", "ORCL", "PLTR", "AMD", "CSCO", "IBM", "CRM", "MU"],
-  "Communication Services": ["GOOGL", "META", "NFLX", "TMUS", "DIS", "T", "VZ"],
-  "Consumer Discretionary": ["AMZN", "TSLA", "HD", "MCD", "BKNG", "TJX", "LOW"],
-  "Financials": ["BRK-B", "JPM", "V", "MA", "BAC", "WFC", "GS", "MS"],
-  "Health Care": ["LLY", "JNJ", "ABBV", "UNH", "ABT", "MRK", "TMO", "ISRG"],
-  "Consumer Staples": ["WMT", "COST", "PG", "KO", "PEP", "PM"],
-  "Energy": ["XOM", "CVX", "COP", "WMB", "EOG", "SLB"],
-  "Industrials": ["GE", "CAT", "RTX", "GEV", "UBER", "HON", "UNP", "BA"],
-  "Materials": ["LIN", "SHW", "NEM", "ECL", "APD", "FCX"],
-  "Utilities": ["NEE", "CEG", "SO", "DUK", "VST", "AEP"],
-  "Real Estate": ["WELL", "PLD", "AMT", "EQIX", "SPG", "O"],
+  "Information Technology": [["NVDA", "NVIDIA"], ["MSFT", "Microsoft"]],
+  "Communication Services": [["GOOGL", "Alphabet (Class A)"], ["META", "Meta Platforms"]],
+  "Consumer Discretionary": [["AMZN", "Amazon"], ["TSLA", "Tesla"]],
+  "Financials": [["BRK-B", "Berkshire Hathaway (Class B)"], ["JPM", "JPMorgan Chase"]],
+  "Health Care": [["LLY", "Eli Lilly"], ["JNJ", "Johnson & Johnson"]],
+  "Consumer Staples": [["WMT", "Walmart"], ["COST", "Costco"]],
+  "Energy": [["XOM", "Exxon Mobil"], ["CVX", "Chevron"]],
+  "Industrials": [["GE", "GE Aerospace"], ["CAT", "Caterpillar"]],
+  "Materials": [["LIN", "Linde"], ["SHW", "Sherwin-Williams"]],
+  "Utilities": [["NEE", "NextEra Energy"], ["CEG", "Constellation Energy"]],
+  "Real Estate": [["WELL", "Welltower"], ["PLD", "Prologis"]],
 };
-
-// Only the two picks per sector need names/prices, so build that list first.
-const PICKS = Object.values(SECTORS).map((s) => s.slice(0, 2));
 
 export default async () => {
   try {
     key();
   } catch {
-    return json({ error: "NO_KEY", message: "Tiingo API key not set. Add TIINGO_KEY in Netlify environment variables and redeploy." }, 500, 0);
+    return json({ error: "NO_KEY", message: "Tiingo API key not set. Add TIINGO_KEY in Netlify environment variables and redeploy." }, 500);
   }
 
-  const picks = PICKS.flat();
-  let quotes = [];
+  const symbols = Object.values(SECTORS).flat().map(([s]) => s);
+
+  // Prices are nice to have; the backtest still works without them.
+  let bySym = {};
+  let quotesError = null;
   try {
-    quotes = await getQuotes(picks);
+    const quotes = await getQuotes(symbols);
+    bySym = Object.fromEntries(quotes.map((q) => [q.symbol, q]));
   } catch (e) {
-    return json({ error: "QUOTES_FAILED", message: String(e.message || e) }, 502, 0);
+    quotesError = String(e.message || e);
   }
-  const bySym = Object.fromEntries(quotes.map((q) => [q.symbol, q]));
 
-  // Names come from metadata; fetch in parallel, tolerate individual failures.
-  const metas = await Promise.all(
-    picks.map((s) => getMeta(s).catch(() => ({ symbol: s, name: s })))
-  );
-  const nameBySym = Object.fromEntries(metas.map((m) => [m.symbol, m.name]));
-
-  const sectors = Object.entries(SECTORS).map(([sector, syms]) => ({
+  const sectors = Object.entries(SECTORS).map(([sector, list]) => ({
     sector,
-    holdings: syms.slice(0, 2).map((s) => ({
-      symbol: s,
-      name: nameBySym[s] || s,
-      marketCap: null, // not available on Tiingo free tier
-      ...(bySym[s] || {}),
-    })),
+    holdings: list.map(([symbol, name]) => ({ symbol, name, ...(bySym[symbol] || {}) })),
   }));
 
-  return json({ asOf: new Date().toISOString(), source: "tiingo-live", sectors }, 200, 30);
+  return json(
+    { asOf: new Date().toISOString(), source: "tiingo", quotesError, sectors },
+    200,
+    // Cache a failed quote pull briefly too, so a rate-limit doesn't get
+    // hammered by repeated refreshes.
+    quotesError ? 120 : QUOTE_CACHE_SECONDS
+  );
 };
 
 export const config = { path: "/api/portfolio" };

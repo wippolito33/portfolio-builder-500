@@ -2,7 +2,7 @@
 const START = 10000;
 const DROP_COUNT = 2;
 const BENCH = "SPY";
-const REFRESH_MS = 60_000;
+const REFRESH_MS = 5 * 60_000; // prices are cached for 5 minutes on the server
 const COLORS = { strategy: "#B7791F", all: "#52606D", bench: "#102A43" };
 
 const state = { years: 10, portfolio: null, history: null, historyKey: "", chart: null };
@@ -34,7 +34,8 @@ async function loadPortfolio() {
   const data = await getJSON("/api/portfolio");
   state.portfolio = data;
   const time = new Date(data.asOf).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  setStatus("live", `Live from Tiingo, updated ${time}`);
+  if (data.quotesError) setStatus("warn", `Live prices unavailable right now; backtest unaffected. Checked ${time}`);
+  else setStatus("live", `Live from Tiingo, updated ${time}`);
   return data;
 }
 
@@ -234,7 +235,7 @@ async function refresh(full) {
   } catch (e) {
     console.error(e);
     setStatus("warn", "Market data unavailable");
-    if (!state.history) showError("Couldn't reach Yahoo Finance through the site's data function. Check the function logs in Netlify, then press Refresh.");
+    if (!state.history) showError(`Couldn't load market data from Tiingo: ${e.message}. If this mentions the hourly limit, wait an hour and press Refresh.`);
   }
 }
 
