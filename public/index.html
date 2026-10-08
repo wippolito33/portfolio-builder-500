@@ -101,6 +101,13 @@
   .mix-table .tk { color: var(--slate); font-size: 0.8125rem; }
   footer { border-top: 1px solid var(--rule); padding: 20px 0 40px; font-size: 0.8125rem; color: var(--slate); }
   footer p { max-width: 90ch; margin: 0 0 8px; }
+  footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 32px; align-items: end; }
+  .contact { display: flex; gap: 16px; align-items: center; font-size: 0.875rem; color: var(--slate); font-style: normal; line-height: 1.45; }
+  .contact img { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; flex: none; border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--rule); }
+  .contact .who { font: 400 1.25rem/1.2 var(--serif); color: var(--ink); }
+  .contact a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--rule); }
+  .contact a:hover { border-bottom-color: var(--ink); }
+  @media (max-width: 720px) { footer { grid-template-columns: 1fr; } }
 
   nav.pages { display: flex; gap: 24px; border-bottom: 1px solid var(--rule); margin-top: 12px; }
   nav.pages a { color: var(--slate); text-decoration: none; font-weight: 500; font-size: 0.9375rem; padding: 10px 0; border-bottom: 2px solid transparent; margin-bottom: -1px; }
@@ -183,8 +190,21 @@
   </section>
 
   <footer>
+    <div>
     <p>Hypothetical, backtested results for internal research only. Holdings are chosen by today's market cap and the two worst performers are removed with hindsight, so results are subject to survivorship and look-ahead bias and overstate what an investor could have achieved in real time. Assumes buy-and-hold with dividends reinvested, no rebalancing, taxes, fees or trading costs. Past performance does not guarantee future results.</p>
-    <p>Market data from Yahoo Finance, may be delayed. Not investment advice. Review with compliance before sharing any output with clients or prospects.</p>
+    <p>Market data from Tiingo and Twelve Data, may be delayed. Not investment advice. Review with compliance before sharing any output with clients or prospects.</p>
+    </div>
+    <address class="contact">
+      <img src="bill-ippolito.jpg" alt="Bill Ippolito" width="80" height="80" />
+      <div>
+        <div class="who">Bill Ippolito</div>
+        Financial Advisor, Alexander Capital, L.P.<br />
+        <a href="tel:+17327845789">(732) 784-5789</a><br />
+        <a href="mailto:bippolito@alexandercapitallp.com">bippolito@alexandercapitallp.com</a><br />
+        <a href="https://alexandercapitalvm.com" target="_blank" rel="noopener">alexandercapitalvm.com</a><br />
+        10 Drs James Parker Blvd, Ste 202<br />Red Bank, NJ 07701
+      </div>
+    </address>
   </footer>
 </div>
 
