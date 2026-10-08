@@ -39,4 +39,9 @@ The free plan allows 50 requests an hour and 1,000 a day. To stay well under tha
 ## Analyze a portfolio (`/analyze.html`)
 - Import a custodian positions CSV (any file with Symbol and Quantity columns, including RBC exports) or type holdings in. Files are read in the browser and never uploaded.
 - Pick a position to sell and a ticker to buy instead. The page shows a 1/3/5/10-year backtest and a forward range of outcomes (resampled historical monthly returns), including estimated tax on the sale.
-- Each holding uses one Tiingo request, cached for 24 hours. A 30-holding portfolio uses most of the free plan's 50 requests an hour the first time it loads.
+- Each holding uses one data request, cached for 24 hours. If the free limits are reached, the page waits a minute and continues automatically.
+
+## Data sources
+- **Tiingo** (`TIINGO_KEY`): live prices, and price history first. Free plan: 50 requests/hour, 1,000/day. History includes dividends.
+- **Twelve Data** (`TWELVEDATA_KEY`): price history once Tiingo's hourly limit is reached. Free plan: 8 requests/minute, 800/day. Asks for dividend-adjusted prices; if the plan doesn't allow that, uses split-adjusted prices and the page flags the stock as "No dividends".
+- Both keys are Netlify environment variables (Site configuration -> Environment variables). Changing a key requires a redeploy.

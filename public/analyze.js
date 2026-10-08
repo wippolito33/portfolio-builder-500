@@ -117,44 +117,67 @@ function holdingsFromText(text) {
 
 // ---------------------------------------------------------------- data
 
+const isLimit = (msg) => /\b429\b|rate limit|request limit|hourly|allocation|credit limit/i.test(msg || "");
+
+// Returns a series, or { error, rateLimited }. Failures aren't remembered, so a
+// later retry can succeed.
 async function fetchSeries(sym) {
   if (state.series[sym]) return state.series[sym];
-  if (state.rateLimited) return { error: "Skipped: Tiingo's hourly limit was reached." };
   let data;
   try {
     const r = await fetch("/api/history?symbols=" + encodeURIComponent(sym));
     data = await r.json().catch(() => null);
-    if (!r.ok || !data || data.error) throw new Error((data && data.message) || `HTTP ${r.status}`);
+    if (!data) throw new Error(`HTTP ${r.status}`);
   } catch (e) {
-    const msg = String(e.message || e);
-    if (/429|hourly|allocation/i.test(msg)) state.rateLimited = true;
-    // Don't remember failures permanently, so a later retry can work.
-    return { error: msg };
+    return { error: String(e.message || e) };
   }
   const pts = data.series && data.series[sym];
   if (!Array.isArray(pts) || pts.length < 2) {
-    const err = (pts && pts.error) || "No price history";
-    if (/429|hourly|allocation/i.test(err)) state.rateLimited = true;
-    return { error: err };
+    const err = (pts && pts.error) || data.message || "No price history";
+    return { error: err, rateLimited: !!((pts && pts.rateLimited) || data.rateLimited || isLimit(err)) };
   }
   const map = new Map();
   for (const p of pts) map.set(monthKey(p.t), p.p);
   const keys = [...map.keys()];
-  return (state.series[sym] = { map, first: Math.min(...keys), last: Math.max(...keys), lastPrice: pts[pts.length - 1].p });
+  const m = (data.meta && data.meta[sym]) || {};
+  return (state.series[sym] = {
+    map, first: Math.min(...keys), last: Math.max(...keys), lastPrice: pts[pts.length - 1].p,
+    source: m.source || "tiingo", adjusted: m.adjusted !== false,
+  });
 }
 
-async function loadAll(symbols, onProgress) {
-  let done = 0;
-  const queue = [...symbols];
+const WAIT_SECONDS = 60;   // Twelve Data's limit resets every minute
+const MAX_WAITS = 8;
+
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+// Loads every symbol. When both data providers say "slow down", waits a
+// minute and continues with whatever is left, up to MAX_WAITS times.
+async function loadAll(symbols, onProgress, onWait) {
   const results = {};
-  async function worker() {
-    while (queue.length) {
-      const s = queue.shift();
-      results[s] = await fetchSeries(s);
-      onProgress(++done, symbols.length);
+  let pending = [...symbols];
+  let done = 0;
+  state.stopWaiting = false;
+  for (let round = 0; pending.length && round <= MAX_WAITS; round++) {
+    if (round > 0) {
+      for (let s = WAIT_SECONDS; s > 0 && !state.stopWaiting; s--) { onWait(s, done, symbols.length); await sleep(1000); }
+      if (state.stopWaiting) break;
     }
+    const queue = [...pending];
+    const retry = [];
+    let hit = false;
+    async function worker() {
+      while (queue.length && !hit) {
+        const sym = queue.shift();
+        const r = await fetchSeries(sym);
+        results[sym] = r;
+        if (r.rateLimited) { hit = true; retry.push(sym); }
+        else onProgress(++done, symbols.length);
+      }
+    }
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    pending = retry.concat(queue);
   }
-  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   return results;
 }
 
@@ -169,7 +192,6 @@ const ret = (s, k) => {
 async function loadHoldings(list, sourceLabel) {
   state.holdings = list;
   state.analysis = null;
-  state.rateLimited = false;
   $("results").hidden = true;
   $("swapMsg").innerHTML = "";
   $("loadMsg").innerHTML = "";
@@ -180,7 +202,13 @@ async function loadHoldings(list, sourceLabel) {
 
   const syms = [...new Set(list.filter((h) => !h.isCash).map((h) => h.symbol).concat(BENCH))];
   $("progress").textContent = `Loading price history: 0 of ${syms.length}`;
-  const loaded = await loadAll(syms, (d, n) => ($("progress").textContent = `Loading price history: ${d} of ${n}`));
+  const loaded = await loadAll(
+    syms,
+    (d, n) => ($("progress").textContent = `Loading price history: ${d} of ${n}`),
+    (secs, d, n) => ($("progress").innerHTML =
+      `Loaded ${d} of ${n}. The free data plans allow only so many requests a minute, so loading continues in ${secs}s. ` +
+      `<button type="button" class="ghost" id="stopWait">Analyze with what's loaded</button>`)
+  );
 
   const bench = state.series[BENCH];
   const lasts = Object.values(state.series).filter((s) => s.map).map((s) => s.last);
@@ -202,11 +230,14 @@ async function loadHoldings(list, sourceLabel) {
   renderHoldings();
 
   const missing = state.holdings.filter((h) => h.status === "nodata");
-  if (state.rateLimited) {
-    $("loadMsg").innerHTML = `<div class="warnbox">Tiingo's free plan allows 50 data requests an hour, and this portfolio used it up before every holding loaded. Holdings marked "No data" are left out of the analysis. Wait an hour and load the file again; anything already loaded is saved for 24 hours and won't count again.</div>`;
-  } else if (missing.length) {
-    $("loadMsg").innerHTML = `<div class="warnbox">No price history for ${missing.map((m) => esc(m.symbol)).join(", ")}, so ${missing.length === 1 ? "it is" : "they are"} left out of the analysis.</div>`;
-  }
+  const limited = missing.filter((h) => loaded[h.symbol] && loaded[h.symbol].rateLimited);
+  const other = missing.filter((h) => !limited.includes(h));
+  const unadj = state.holdings.filter((h) => h.status === "ok" && !state.series[h.symbol].adjusted);
+  let msg = "";
+  if (limited.length) msg += `<div class="warnbox">The free data plans' limits were reached before ${limited.map((m) => esc(m.symbol)).join(", ")} loaded, so ${limited.length === 1 ? "it is" : "they are"} left out for now. Load the file again in a few minutes; holdings already loaded are saved for 24 hours and won't count again.</div>`;
+  if (other.length) msg += `<div class="warnbox">No price history for ${other.map((m) => esc(m.symbol)).join(", ")}, so ${other.length === 1 ? "it is" : "they are"} left out of the analysis.</div>`;
+  if (unadj.length) msg += `<div class="warnbox">Price history for ${unadj.map((m) => esc(m.symbol)).join(", ")} came from Twelve Data without dividends, so ${unadj.length === 1 ? "its returns are" : "their returns are"} understated.</div>`;
+  $("loadMsg").innerHTML = msg;
   if (!state.endK) {
     $("loadMsg").innerHTML += `<div class="error">No price history could be loaded, so there's nothing to analyze yet.</div>`;
     return;
@@ -239,7 +270,7 @@ function renderHoldings() {
       if (a && b) r5 = b / a - 1;
     }
     const tag = h.isCash ? `<span class="tag">Cash</span>`
-      : h.status === "ok" ? `<span class="tag">Since ${keyLabel(s.first)}</span>`
+      : h.status === "ok" ? `<span class="tag">Since ${keyLabel(s.first)}</span>${s.adjusted ? "" : ` <span class="tag warn" title="Twelve Data history without dividends">No dividends</span>`}`
       : h.status === "nodata" ? `<span class="tag warn" title="${esc(h.error)}">No data</span>`
       : `<span class="tag">Loading</span>`;
     return `<tr class="${h.symbol === sel ? "selected" : ""}">
@@ -537,9 +568,9 @@ async function runSwap() {
   $("runBtn").disabled = false;
   $("runBtn").textContent = "Compare";
   if (!s || !s.map) {
-    const limited = /429|hourly|allocation/i.test(s && s.error);
+    const limited = s && s.rateLimited;
     $("swapMsg").innerHTML = `<div class="error">${limited
-      ? "Tiingo's hourly limit of 50 data requests has been reached. Try again in an hour."
+      ? "The free data plans' request limits have been reached. Try again in a minute."
       : `Couldn't find price history for ${esc(ySym)}. Check the ticker.`}</div>`;
     return;
   }
@@ -591,6 +622,7 @@ $("manualBtn").addEventListener("click", () => {
   }
 });
 $("runBtn").addEventListener("click", runSwap);
+$("progress").addEventListener("click", (e) => { if (e.target.id === "stopWait") state.stopWaiting = true; });
 $("buyIn").addEventListener("keydown", (e) => { if (e.key === "Enter") runSwap(); });
 $("taxIn").addEventListener("change", () => { if (state.analysis) { renderTax(); renderProjection(); } });
 seg("periodSeg", "period", renderBacktest);

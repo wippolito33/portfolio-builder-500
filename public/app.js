@@ -235,7 +235,7 @@ async function refresh(full) {
   } catch (e) {
     console.error(e);
     setStatus("warn", "Market data unavailable");
-    if (!state.history) showError(`Couldn't load market data from Tiingo: ${e.message}. If this mentions the hourly limit, wait an hour and press Refresh.`);
+    if (!state.history) showError(`Couldn't load market data: ${e.message}. If this mentions a limit, wait a few minutes and press Refresh.`);
   }
 }
 
