@@ -54,30 +54,90 @@ function setStatus(kind, text) {
 async function loadPortfolio() {
   const data = await getJSON("/api/portfolio");
   state.portfolio = data;
+  setPriceStatus();
+  return data;
+}
+
+function setPriceStatus() {
+  const data = state.portfolio;
+  if (!data) return;
   const time = new Date(data.asOf).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   if (data.quotesError) setStatus("warn", `Live prices unavailable right now; backtest unaffected. Checked ${time}`);
   else setStatus("live", `Live from Tiingo, updated ${time}`);
-  return data;
 }
 
 function holdingsList() {
   return state.portfolio.sectors.flatMap((s) => s.holdings.map((h) => ({ ...h, sector: s.sector })));
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const WAIT_SECONDS = 60;  // Twelve Data's per-minute limit resets every minute
+const MAX_WAITS = 8;
+
+function toSeries(pts) {
+  const m = new Map();
+  for (const pt of pts) m.set(monthKey(pt.t), pt.p);
+  return { map: m, first: Math.min(...m.keys()), last: Math.max(...m.keys()) };
+}
+
+async function fetchOneHistory(sym) {
+  try {
+    const r = await fetch("/api/history?symbols=" + encodeURIComponent(sym));
+    const d = await r.json().catch(() => null);
+    const pts = d && d.series && d.series[sym];
+    if (Array.isArray(pts) && pts.length > 1) return { series: toSeries(pts) };
+    const err = (pts && pts.error) || (d && d.message) || `HTTP ${r.status}`;
+    return { error: err, rateLimited: !!((pts && pts.rateLimited) || (d && d.rateLimited) || r.status === 429) };
+  } catch (e) {
+    return { error: String(e.message || e) };
+  }
+}
+
+// Loads price history for the 22 stocks plus SPY. Tries one combined request
+// first (usually already cached); anything it didn't return is fetched one
+// stock at a time, waiting out the data providers' per-minute limits. Only
+// successes are kept, so a later refresh retries whatever is still missing.
 async function loadHistory() {
   const syms = holdingsList().map((h) => h.symbol).concat(BENCH);
   const key = syms.slice().sort().join(",");
-  if (key === state.historyKey && state.history) return state.history;
-  const data = await getJSON("/api/history?symbols=" + encodeURIComponent(syms.join(",")));
-  const maps = {};
-  for (const [s, pts] of Object.entries(data.series)) {
-    if (!Array.isArray(pts)) continue;
-    const m = new Map();
-    for (const pt of pts) m.set(monthKey(pt.t), pt.p);
-    maps[s] = { map: m, first: Math.min(...m.keys()), last: Math.max(...m.keys()) };
+  if (key !== state.historyKey || !state.history) { state.history = {}; state.historyKey = key; }
+  const maps = state.history;
+  if (state.loadingHistory || syms.every((s) => maps[s])) return maps;
+  state.loadingHistory = true;
+  const progress = (extra = "") => {
+    const n = syms.filter((s) => maps[s]).length;
+    if (n < syms.length) setStatus("warn", `Loaded price history for ${n} of ${syms.length}${extra}`);
+  };
+  try {
+    if (syms.every((s) => !maps[s])) {
+      try {
+        const r = await fetch("/api/history?symbols=" + encodeURIComponent(syms.join(",")));
+        const d = await r.json().catch(() => null);
+        if (d && d.series) for (const [s, pts] of Object.entries(d.series)) if (Array.isArray(pts) && pts.length > 1) maps[s] = toSeries(pts);
+      } catch { /* fall through to one at a time */ }
+      renderAll();
+    }
+    let need = syms.filter((s) => !maps[s]);
+    for (let round = 0; need.length && round <= MAX_WAITS; round++) {
+      if (round > 0) {
+        for (let sec = WAIT_SECONDS; sec > 0; sec--) { progress(`. The free data plans allow only so many requests a minute; continuing in ${sec}s`); await sleep(1000); }
+      }
+      const retry = [];
+      let limited = false;
+      for (const s of need) {
+        if (limited) { retry.push(s); continue; }
+        const r = await fetchOneHistory(s);
+        if (r.series) { maps[s] = r.series; progress(); }
+        else if (r.rateLimited) { limited = true; retry.push(s); }
+      }
+      need = retry;
+      renderAll();
+    }
+  } finally {
+    state.loadingHistory = false;
   }
-  state.history = maps;
-  state.historyKey = key;
+  if (syms.every((s) => maps[s])) setPriceStatus();
+  else progress(". The rest will be retried on the next refresh");
   return maps;
 }
 
@@ -116,7 +176,8 @@ function backtest(years) {
 
   const rows = holdingsList().map((h) => {
     const s = H[h.symbol];
-    if (!s || s.first > startK) return { ...h, status: "na", ret: null };
+    if (!s) return { ...h, status: "nodata", ret: null };
+    if (s.first > startK) return { ...h, status: "na", ret: null };
     const p0 = priceAt(s, startK), p1 = priceAt(s, endK);
     return { ...h, series: s, p0, ret: p1 / p0 - 1, status: "held" };
   });
@@ -140,6 +201,7 @@ function backtest(years) {
     all: { values: all, ...stats(all, months) },
     bench: benchVals ? { values: benchVals, ...stats(benchVals, months) } : null,
     missing: rows.filter((r) => r.status === "na"),
+    nodata: rows.filter((r) => r.status === "nodata"),
   };
 }
 
@@ -148,9 +210,16 @@ function renderHero(bt) {
   const s = bt.strategy;
   const joinAnd = (a) => a.length < 2 ? a.join("") : a.slice(0, -1).join(", ") + " and " + a.at(-1);
   const missing = bt.missing.map((m) => m.symbol);
+  const nodata = bt.nodata.map((m) => m.symbol);
+  const reasons = [];
+  if (missing.length) reasons.push(`${joinAnd(missing)} ${missing.length === 1 ? "wasn't" : "weren't"} public yet`);
+  if (nodata.length) reasons.push(`price history for ${joinAnd(nodata)} hasn't loaded`);
   const weightNote = bt.held.length === 20
     ? "Holds 20 stocks at 5% each."
-    : `Holds ${bt.held.length} stocks at ${(100 / bt.held.length).toFixed(2)}% each because ${joinAnd(missing)} ${missing.length === 1 ? "wasn't" : "weren't"} public yet.`;
+    : `Holds ${bt.held.length} stocks at ${(100 / bt.held.length).toFixed(2)}% each because ${reasons.join(", and ")}.`;
+  const warn = nodata.length
+    ? `<div class="error" style="background:#FBEFD9;color:#6B4510">${nodata.length} of the 22 stocks are missing price history${state.loadingHistory ? " and are still loading" : " because the free data plans' limits were reached"}, so these results are incomplete. ${state.loadingHistory ? "The page updates as they arrive." : "Press Refresh in a few minutes."}</div>`
+    : "";
   const dropped = bt.eligible.filter((r) => r.status === "dropped").map((r) => r.symbol);
 
   const card = (title, color, x) => `
@@ -164,7 +233,7 @@ function renderHero(bt) {
       </dl>
     </div>`;
 
-  $("heroBody").innerHTML = `
+  $("heroBody").innerHTML = `${warn}
     <h2 class="headline">$10,000 invested ${bt.years === 1 ? "a year" : bt.years + " years"} ago is worth <span class="amt">${fmtUSD(s.end)}</span> today</h2>
     <p class="sub">Started ${bt.labels[0]}. ${weightNote} ${joinAnd(dropped)} ${dropped.length === 1 ? "was" : "were"} removed as the weakest performers over the period. Buy-and-hold, dividends reinvested.</p>
     <div class="compare">
@@ -214,7 +283,8 @@ function renderTable(bt) {
       const r = byRow[h.symbol] || {};
       const tag = r.status === "held" ? `<span class="tag held">Held, ${(r.weight * 100).toFixed(r.weight === 0.05 ? 0 : 2)}%</span>`
         : r.status === "dropped" ? `<span class="tag dropped">Dropped, bottom 2</span>`
-        : r.status === "na" ? `<span class="tag na">Not public yet</span>` : "";
+        : r.status === "na" ? `<span class="tag na">Not public yet</span>`
+        : r.status === "nodata" ? `<span class="tag dropped">Data not loaded</span>` : "";
       html += `<tr class="${i === 0 ? "sector-start" : ""} ${r.status === "dropped" ? "is-dropped" : ""}">
         <td class="sector">${i === 0 ? s.sector : ""}</td>
         <td><span class="tick">${h.symbol}</span><span class="name">${h.name || ""}</span></td>
@@ -230,7 +300,7 @@ function renderTable(bt) {
 
 function renderAll() {
   if (!state.portfolio) return;
-  if (!state.history) { renderTable(null); return; }
+  if (!state.history || !state.history[BENCH]) { renderTable(null); return; }
   const bt = backtest(state.years);
   renderHero(bt);
   renderChart(bt);
@@ -255,11 +325,13 @@ function renderMix(bt) {
   else rows.sort((a, b) => order.indexOf(a.sector) - order.indexOf(b.sector));
   const out = state.portfolio.sectors.map((s) => s.sector).filter((s) => !bySector.has(s));
   const dropped = bt.eligible.filter((r) => r.status === "dropped").map((r) => r.symbol);
+  const notLoaded = bt.nodata.map((r) => r.symbol);
 
   $("mixSection").hidden = false;
   $("mixNote").textContent = state.mixView === "start"
     ? `${bt.held.length} stocks at ${(100 / bt.held.length).toFixed(bt.held.length === 20 ? 0 : 2)}% each, ${bt.years === 1 ? "a year" : bt.years + " years"} ago. Sectors that lost a stock to the bottom-two cut (${dropped.join(", ")}) or to a later listing hold less.`
     : `Where the money sits today after ${bt.years === 1 ? "a year" : bt.years + " years"} of buy-and-hold with no rebalancing. Winners grow into bigger slices.`;
+  if (notLoaded.length) $("mixNote").textContent += ` Price history for ${notLoaded.join(", ")} hasn't loaded yet, so ${notLoaded.length === 1 ? "it's" : "they're"} not in the chart.`;
 
   const colors = rows.map((r) => SECTOR_COLORS[r.sector] || "#8A96A3");
   const narrow = () => $("pie").parentElement.clientWidth < 640;
@@ -331,17 +403,12 @@ async function refresh(full) {
   try {
     await loadPortfolio();
     renderAll(); // show live prices right away
-    if (full || !state.history) { await loadHistory(); renderAll(); }
-    else {
-      // If market-cap ranking changed the 22, pull new history.
-      const before = state.historyKey;
-      await loadHistory();
-      if (state.historyKey !== before) renderAll();
-    }
+    await loadHistory();
+    renderAll();
   } catch (e) {
     console.error(e);
     setStatus("warn", "Market data unavailable");
-    if (!state.history) showError(`Couldn't load market data: ${e.message}. If this mentions a limit, wait a few minutes and press Refresh.`);
+    if (!state.history || !Object.keys(state.history).length) showError(`Couldn't load market data: ${e.message}. If this mentions a limit, wait a few minutes and press Refresh.`);
   }
 }
 
