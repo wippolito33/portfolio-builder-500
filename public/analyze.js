@@ -1,0 +1,597 @@
+// Portfolio Builder 500: analyze a portfolio and test replacing one position.
+// Everything here runs in the browser. Positions files are never uploaded;
+// only ticker symbols are sent to /api/history to fetch price history.
+
+const BENCH = "SPY";
+const CONCURRENCY = 3;
+const SIMS = 4000;
+const C = { cur: "#3E7CB1", swap: "#B7791F", bench: "#8A96A3" };
+const BAND = { cur: "rgba(62,124,177,0.14)", swap: "rgba(183,121,31,0.16)" };
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const usd = (v, d = 0) => v == null || !isFinite(v) ? "—" : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: d, minimumFractionDigits: d });
+const pct = (v, d = 1, sign = true) => v == null || !isFinite(v) ? "—" : (sign && v > 0 ? "+" : "") + (v * 100).toFixed(d) + "%";
+const cls = (v) => v == null || !isFinite(v) ? "" : v >= 0 ? "up" : "down";
+const monthKey = (t) => { const d = new Date(t); return d.getUTCFullYear() * 12 + d.getUTCMonth(); };
+const keyLabel = (k) => new Date(Date.UTC(Math.floor(k / 12), k % 12, 1)).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+
+const state = {
+  holdings: [],      // { symbol, name, shares, value, cost, gain, isCash, status, error }
+  series: {},        // symbol -> { map: Map(monthKey -> adjClose), first, last } | { error }
+  endK: null,
+  rateLimited: false,
+  analysis: null,    // last swap analysis
+  period: 5,
+  horizon: 5,
+  charts: {},
+};
+
+// ---------------------------------------------------------------- parsing
+
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+      else field += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field); rows.push(row); row = []; field = "";
+    } else field += c;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows.map((r) => r.map((s) => s.trim()));
+}
+
+function num(s) {
+  if (s == null) return null;
+  let t = String(s).trim();
+  if (!t || t === "--" || t.toLowerCase() === "n/a") return null;
+  const neg = /^\(.*\)$/.test(t);
+  t = t.replace(/[()$,%\s]/g, "");
+  const v = parseFloat(t);
+  return isFinite(v) ? (neg ? -v : v) : null;
+}
+
+const isCashLike = (sym, name) =>
+  /\b(deposit|deposits|money market|cash|sweep)\b/i.test(name || "") || /^(CASH|BDP\b|BDP-)/i.test(sym || "");
+
+const cleanSym = (s) => String(s || "").toUpperCase().replace(/^\*+/, "").replace(/\//g, "-").trim();
+
+function holdingsFromCSV(text) {
+  const rows = parseCSV(text).filter((r) => r.some((c) => c));
+  const hi = rows.findIndex((r) => r.some((c) => /^(symbol|ticker)$/i.test(c)));
+  if (hi < 0) throw new Error("Couldn't find a Symbol or Ticker column in this file.");
+  const head = rows[hi].map((h) => h.toLowerCase());
+  const col = (re, not) => head.findIndex((h) => re.test(h) && !(not && not.test(h)));
+  const iSym = col(/^(symbol|ticker)$/);
+  const iQty = col(/^(quantity|qty|shares)$/);
+  const iName = col(/^(name|description|security|security description)$/);
+  const iPrice = col(/^(price|last price|current price)$/);
+  const iMV = col(/market value|^value$|current value/);
+  const iCost = col(/net cost|cost basis|total cost/);
+  const iGain = col(/unrealized/, /%|percent/);
+  if (iQty < 0 && iMV < 0) throw new Error("Couldn't find a Quantity or Market Value column in this file.");
+
+  const out = [];
+  for (const r of rows.slice(hi + 1)) {
+    const symbol = cleanSym(r[iSym]);
+    if (!symbol || !/^[A-Z0-9.\-]{1,12}$/.test(symbol)) continue; // footers, disclaimers
+    const name = iName >= 0 ? r[iName] : "";
+    const shares = iQty >= 0 ? num(r[iQty]) : null;
+    const price = iPrice >= 0 ? num(r[iPrice]) : null;
+    let value = iMV >= 0 ? num(r[iMV]) : null;
+    if (value == null && shares != null && price != null) value = shares * price;
+    const cost = iCost >= 0 ? num(r[iCost]) : null;
+    let gain = iGain >= 0 ? num(r[iGain]) : null;
+    if (gain == null && cost != null && value != null) gain = value - cost;
+    out.push({ symbol, name, shares, value, cost, gain, isCash: isCashLike(symbol, name) });
+  }
+  if (!out.length) throw new Error("No holdings found in this file.");
+  return out;
+}
+
+function holdingsFromText(text) {
+  const out = [];
+  const bad = [];
+  for (const line of text.split(/\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    const parts = t.split(/[,\t]+|\s+/).filter(Boolean);
+    const symbol = cleanSym(parts[0]);
+    const a = num(parts[1]);
+    const cost = num(parts[2]);
+    if (!/^[A-Z0-9.\-]{1,12}$/.test(symbol) || a == null) { bad.push(t); continue; }
+    if (isCashLike(symbol, "")) out.push({ symbol: "CASH", name: "Cash", shares: null, value: a, cost: a, gain: 0, isCash: true });
+    else out.push({ symbol, name: "", shares: a, value: null, cost, gain: null, isCash: false });
+  }
+  if (bad.length) throw new Error(`Couldn't read: ${bad.slice(0, 3).join("; ")}. Use "TICKER, shares" on each line.`);
+  if (!out.length) throw new Error("Enter at least one holding.");
+  return out;
+}
+
+// ---------------------------------------------------------------- data
+
+async function fetchSeries(sym) {
+  if (state.series[sym]) return state.series[sym];
+  if (state.rateLimited) return { error: "Skipped: Tiingo's hourly limit was reached." };
+  let data;
+  try {
+    const r = await fetch("/api/history?symbols=" + encodeURIComponent(sym));
+    data = await r.json().catch(() => null);
+    if (!r.ok || !data || data.error) throw new Error((data && data.message) || `HTTP ${r.status}`);
+  } catch (e) {
+    const msg = String(e.message || e);
+    if (/429|hourly|allocation/i.test(msg)) state.rateLimited = true;
+    // Don't remember failures permanently, so a later retry can work.
+    return { error: msg };
+  }
+  const pts = data.series && data.series[sym];
+  if (!Array.isArray(pts) || pts.length < 2) {
+    const err = (pts && pts.error) || "No price history";
+    if (/429|hourly|allocation/i.test(err)) state.rateLimited = true;
+    return { error: err };
+  }
+  const map = new Map();
+  for (const p of pts) map.set(monthKey(p.t), p.p);
+  const keys = [...map.keys()];
+  return (state.series[sym] = { map, first: Math.min(...keys), last: Math.max(...keys), lastPrice: pts[pts.length - 1].p });
+}
+
+async function loadAll(symbols, onProgress) {
+  let done = 0;
+  const queue = [...symbols];
+  const results = {};
+  async function worker() {
+    while (queue.length) {
+      const s = queue.shift();
+      results[s] = await fetchSeries(s);
+      onProgress(++done, symbols.length);
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  return results;
+}
+
+const ret = (s, k) => {
+  if (!s || !s.map) return null;
+  const a = s.map.get(k - 1), b = s.map.get(k);
+  return a && b ? b / a - 1 : null;
+};
+
+// ---------------------------------------------------------------- holdings
+
+async function loadHoldings(list, sourceLabel) {
+  state.holdings = list;
+  state.analysis = null;
+  state.rateLimited = false;
+  $("results").hidden = true;
+  $("swapMsg").innerHTML = "";
+  $("loadMsg").innerHTML = "";
+  $("holdings").hidden = false;
+  $("swap").hidden = true;
+  $("holdNote").textContent = sourceLabel;
+  renderHoldings();
+
+  const syms = [...new Set(list.filter((h) => !h.isCash).map((h) => h.symbol).concat(BENCH))];
+  $("progress").textContent = `Loading price history: 0 of ${syms.length}`;
+  const loaded = await loadAll(syms, (d, n) => ($("progress").textContent = `Loading price history: ${d} of ${n}`));
+
+  const bench = state.series[BENCH];
+  const lasts = Object.values(state.series).filter((s) => s.map).map((s) => s.last);
+  state.endK = bench && bench.map ? bench.last : lasts.length ? Math.max(...lasts) : null;
+
+  for (const h of state.holdings) {
+    if (h.isCash) { h.status = "cash"; continue; }
+    const s = loaded[h.symbol];
+    if (s && s.map) {
+      h.status = "ok";
+      if (h.value == null && h.shares != null) h.value = h.shares * s.lastPrice;
+      if (h.gain == null && h.cost != null && h.value != null) h.gain = h.value - h.cost;
+    } else {
+      h.status = "nodata";
+      h.error = s ? s.error : "No price history";
+    }
+  }
+  $("progress").textContent = "";
+  renderHoldings();
+
+  const missing = state.holdings.filter((h) => h.status === "nodata");
+  if (state.rateLimited) {
+    $("loadMsg").innerHTML = `<div class="warnbox">Tiingo's free plan allows 50 data requests an hour, and this portfolio used it up before every holding loaded. Holdings marked "No data" are left out of the analysis. Wait an hour and load the file again; anything already loaded is saved for 24 hours and won't count again.</div>`;
+  } else if (missing.length) {
+    $("loadMsg").innerHTML = `<div class="warnbox">No price history for ${missing.map((m) => esc(m.symbol)).join(", ")}, so ${missing.length === 1 ? "it is" : "they are"} left out of the analysis.</div>`;
+  }
+  if (!state.endK) {
+    $("loadMsg").innerHTML += `<div class="error">No price history could be loaded, so there's nothing to analyze yet.</div>`;
+    return;
+  }
+  fillSellSelect();
+  $("swap").hidden = false;
+}
+
+function included() {
+  return state.holdings.filter((h) => (h.status === "ok" || h.status === "cash") && h.value > 0);
+}
+
+function renderHoldings() {
+  const inc = included();
+  const total = inc.reduce((a, h) => a + h.value, 0);
+  const all = state.holdings.reduce((a, h) => a + (h.value || 0), 0);
+  const gain = state.holdings.reduce((a, h) => a + (h.gain || 0), 0);
+  $("summary").innerHTML = `
+    <div><b>${usd(all)}</b>Total value</div>
+    <div><b>${state.holdings.length}</b>Holdings</div>
+    <div><b class="${cls(gain)}">${usd(gain)}</b>Unrealized gain</div>`;
+
+  const sorted = [...state.holdings].sort((a, b) => (b.value || 0) - (a.value || 0));
+  const sel = state.analysis && state.analysis.x.symbol;
+  $("rows").innerHTML = sorted.map((h) => {
+    const s = state.series[h.symbol];
+    let r5 = null;
+    if (s && s.map && state.endK) {
+      const a = s.map.get(state.endK - 60), b = s.map.get(state.endK);
+      if (a && b) r5 = b / a - 1;
+    }
+    const tag = h.isCash ? `<span class="tag">Cash</span>`
+      : h.status === "ok" ? `<span class="tag">Since ${keyLabel(s.first)}</span>`
+      : h.status === "nodata" ? `<span class="tag warn" title="${esc(h.error)}">No data</span>`
+      : `<span class="tag">Loading</span>`;
+    return `<tr class="${h.symbol === sel ? "selected" : ""}">
+      <td><span class="tick">${esc(h.symbol)}</span>${h.name ? `<span class="name">${esc(h.name)}</span>` : ""}</td>
+      <td class="num">${h.shares == null ? "—" : h.shares.toLocaleString("en-US", { maximumFractionDigits: 4 })}</td>
+      <td class="num">${usd(h.value)}</td>
+      <td class="num">${h.value != null && all ? pct(h.value / all, 1, false) : "—"}</td>
+      <td class="num ${cls(h.gain)}">${h.gain == null ? "—" : usd(h.gain)}</td>
+      <td class="num ${cls(r5)}">${pct(r5, 0)}</td>
+      <td>${tag}</td>
+    </tr>`;
+  }).join("");
+}
+
+function fillSellSelect() {
+  const opts = included().filter((h) => !h.isCash).sort((a, b) => b.value - a.value);
+  $("sellSel").innerHTML = opts.map((h) => `<option value="${esc(h.symbol)}">${esc(h.symbol)} (${usd(h.value)})</option>`).join("");
+}
+
+// ---------------------------------------------------------------- analysis
+
+function stats(rets) {
+  let v = 10000, peak = 10000, mdd = 0;
+  const path = [v];
+  for (const r of rets) { v *= 1 + r; path.push(v); peak = Math.max(peak, v); mdd = Math.min(mdd, v / peak - 1); }
+  const n = rets.length;
+  const mean = rets.reduce((a, b) => a + b, 0) / n;
+  const sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / Math.max(1, n - 1));
+  return { path, end: v, total: v / 10000 - 1, cagr: Math.pow(v / 10000, 12 / n) - 1, vol: sd * Math.sqrt(12), mdd };
+}
+
+function corr(a, b) {
+  const n = a.length;
+  const ma = a.reduce((s, x) => s + x, 0) / n, mb = b.reduce((s, x) => s + x, 0) / n;
+  let num = 0, da = 0, db = 0;
+  for (let i = 0; i < n; i++) { num += (a[i] - ma) * (b[i] - mb); da += (a[i] - ma) ** 2; db += (b[i] - mb) ** 2; }
+  return num / Math.sqrt(da * db);
+}
+
+// Monthly return of everything except the position being sold, weighted by
+// today's values. Holdings without data in a given month are skipped and the
+// remaining weights are rescaled; cash earns 0.
+function restReturn(rest, k) {
+  let w = 0, r = 0;
+  for (const h of rest) {
+    const x = h.isCash ? 0 : ret(state.series[h.symbol], k);
+    if (x == null) continue;
+    w += h.value; r += h.value * x;
+  }
+  return w ? r / w : 0;
+}
+
+function analyze(xSym, ySym) {
+  const inc = included();
+  const x = inc.find((h) => h.symbol === xSym);
+  const rest = inc.filter((h) => h !== x);
+  const total = inc.reduce((a, h) => a + h.value, 0);
+  const wX = x.value / total;
+  const sx = state.series[x.symbol], sy = state.series[ySym], sb = state.series[BENCH];
+  const endK = state.endK;
+  const firstK = Math.max(sx.first, sy.first) + 1; // first month with a return for both
+
+  // Joint monthly returns for every month both X and Y have data.
+  const months = [];
+  for (let k = firstK; k <= endK; k++) {
+    const rx = ret(sx, k), ry = ret(sy, k);
+    if (rx == null || ry == null) continue;
+    const rr = restReturn(rest, k);
+    months.push({ k, rx, ry, rr, cur: wX * rx + (1 - wX) * rr, swp: wX * ry + (1 - wX) * rr, rb: ret(sb, k) });
+  }
+
+  const gain = x.gain != null ? x.gain : x.cost != null ? x.value - x.cost : null;
+  return { x, ySym, wX, total, months, gain, firstK, endK, rest };
+}
+
+function inWindow(a, years) {
+  const startK = a.endK - years * 12;
+  return a.months.filter((m) => m.k > startK);
+}
+
+// Small seeded RNG so the projection doesn't jump around between clicks.
+function rng(seed) {
+  return () => {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Resample historical months (the same month for both versions, so they face
+// identical markets) to build a range of possible paths.
+function project(a, years, taxRate) {
+  const sample = a.months.slice(-120);
+  const H = years * 12;
+  const tax = Math.max(0, a.gain || 0) * taxRate;
+  const v0c = a.total, v0s = a.total - tax;
+  const c = new Float64Array(SIMS).fill(v0c), s = new Float64Array(SIMS).fill(v0s);
+  const rand = rng(500);
+  const q = (arr, p) => arr[Math.min(arr.length - 1, Math.floor(p * arr.length))];
+  const bands = { cur: [[v0c, v0c, v0c]], swp: [[v0s, v0s, v0s]] };
+  for (let m = 1; m <= H; m++) {
+    for (let i = 0; i < SIMS; i++) {
+      const mo = sample[Math.floor(rand() * sample.length)];
+      c[i] *= 1 + mo.cur; s[i] *= 1 + mo.swp;
+    }
+    const sc = Float64Array.from(c).sort(), ss = Float64Array.from(s).sort();
+    bands.cur.push([q(sc, 0.1), q(sc, 0.5), q(sc, 0.9)]);
+    bands.swp.push([q(ss, 0.1), q(ss, 0.5), q(ss, 0.9)]);
+  }
+  let ahead = 0;
+  for (let i = 0; i < SIMS; i++) if (s[i] > c[i]) ahead++;
+  return { tax, v0c, v0s, bands, ahead: ahead / SIMS, sampleMonths: sample.length, sampleFrom: sample[0].k };
+}
+
+// ---------------------------------------------------------------- render
+
+function lineChart(id, labels, datasets, yFmt) {
+  if (state.charts[id]) state.charts[id].destroy();
+  state.charts[id] = new Chart($(id), {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          filter: (i) => !i.dataset.bandEdge,
+          callbacks: { label: (c) => `${c.dataset.label}: ${yFmt(c.parsed.y)}` },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 7, color: "#52606D", font: { family: "Instrument Sans" } } },
+        y: { grid: { color: "#E6EBF0" }, border: { display: false }, ticks: { color: "#52606D", font: { family: "Instrument Sans" }, callback: (v) => yFmt(v) } },
+      },
+    },
+  });
+}
+
+const line = (label, data, color, opts = {}) => ({
+  label, data, borderColor: color, backgroundColor: color, borderWidth: 2,
+  pointRadius: 0, pointHoverRadius: 4, tension: 0.15, ...opts,
+});
+
+const legend = (items) => items.map(([label, color, dash]) =>
+  `<span><span class="swatch ${dash ? "dash" : ""}" style="background:${color}"></span>${esc(label)}</span>`).join("");
+
+function renderBacktest() {
+  const a = state.analysis;
+  const want = state.period;
+  const ms = inWindow(a, want);
+  const xs = a.x.symbol, ys = a.ySym;
+  if (ms.length < 6) {
+    $("backTable").innerHTML = "";
+    $("periodNote").textContent = `Not enough shared history for ${xs} and ${ys} to backtest this period.`;
+    return;
+  }
+  const actualYears = ms.length / 12;
+  $("periodNote").textContent = actualYears < want - 0.1
+    ? `${state.series[xs].first >= state.series[ys].first ? xs : ys} has only traded since ${keyLabel(a.firstK - 1)}, so this covers ${actualYears.toFixed(1)} years.`
+    : `${keyLabel(ms[0].k - 1)} to ${keyLabel(ms[ms.length - 1].k)}`;
+
+  const cur = stats(ms.map((m) => m.cur));
+  const swp = stats(ms.map((m) => m.swp));
+  const hasB = ms.every((m) => m.rb != null);
+  const ben = hasB ? stats(ms.map((m) => m.rb)) : null;
+  const sx = stats(ms.map((m) => m.rx));
+  const sy = stats(ms.map((m) => m.ry));
+  const rr = ms.map((m) => m.rr);
+  const cx = corr(ms.map((m) => m.rx), rr), cy = corr(ms.map((m) => m.ry), rr);
+
+  const better = swp.cagr > cur.cagr;
+  const span = actualYears < want - 0.1 ? `${actualYears.toFixed(1)} years` : `${want} year${want > 1 ? "s" : ""}`;
+  $("headline").textContent = `Over the last ${span}, owning ${ys} instead of ${xs} would have ${better ? "raised" : "lowered"} the portfolio's annual return from ${pct(cur.cagr, 1, false)} to ${pct(swp.cagr, 1, false)}.`;
+
+  const cols = [
+    ["Portfolio as is", cur],
+    [`With ${ys} instead of ${xs}`, swp],
+    ...(ben ? [["S&P 500 (SPY)", ben]] : []),
+    [`${xs} alone`, sx],
+    [`${ys} alone`, sy],
+  ];
+  const row = (label, f, fmtCls) => `<tr><td>${label}</td>${cols.map(([, s]) => `<td class="num ${fmtCls ? cls(fmtCls(s)) : ""}">${f(s)}</td>`).join("")}</tr>`;
+  $("backTable").innerHTML = `
+    <thead><tr><th></th>${cols.map(([h]) => `<th class="num">${esc(h)}</th>`).join("")}</tr></thead>
+    <tbody>
+      ${row("$10,000 became", (s) => usd(s.end))}
+      ${row("Total return", (s) => pct(s.total), (s) => s.total)}
+      ${row("Annual return", (s) => pct(s.cagr), (s) => s.cagr)}
+      ${row("Volatility (annual)", (s) => pct(s.vol, 1, false))}
+      ${row("Worst drop", (s) => pct(s.mdd), (s) => s.mdd)}
+      <tr><td>Correlation with the rest of the portfolio</td>${cols.map(([h]) =>
+        `<td class="num">${h === `${xs} alone` ? cx.toFixed(2) : h === `${ys} alone` ? cy.toFixed(2) : ""}</td>`).join("")}</tr>
+    </tbody>`;
+
+  const labels = [keyLabel(ms[0].k - 1), ...ms.map((m) => keyLabel(m.k))];
+  const ds = [
+    line("Portfolio as is", cur.path, C.cur),
+    line(`With ${ys}`, swp.path, C.swap),
+  ];
+  if (ben) ds.push(line("S&P 500 (SPY)", ben.path, C.bench, { borderWidth: 1.5, borderDash: [5, 4] }));
+  lineChart("backChart", labels, ds, (v) => usd(v));
+  $("backLegend").innerHTML = legend([["Portfolio as is", C.cur], [`With ${ys} instead of ${xs}`, C.swap], ...(ben ? [["S&P 500 (SPY)", C.bench, true]] : [])]);
+}
+
+function renderTax() {
+  const a = state.analysis;
+  const rate = taxRate();
+  const xs = a.x.symbol;
+  let html;
+  if (a.gain == null) {
+    html = `No cost basis for ${esc(xs)}, so tax isn't included. Add the cost basis to estimate it.`;
+  } else if (a.gain <= 0) {
+    html = `Selling all ${usd(a.x.value)} of ${esc(xs)} realizes a <b>loss of ${usd(-a.gain)}</b>, which could offset other gains. No tax is deducted from the amount reinvested.`;
+  } else {
+    const tax = a.gain * rate;
+    html = `Selling all ${usd(a.x.value)} of ${esc(xs)} realizes a <b>${usd(a.gain)} gain</b>. At ${(rate * 100).toFixed(1)}%, that's about <b>${usd(tax)} in tax</b>, leaving ${usd(a.x.value - tax)} to buy ${esc(a.ySym)}. The projection below starts the replacement portfolio ${usd(tax)} behind.`;
+  }
+  html += ` ${esc(xs)} is ${pct(a.wX, 1, false)} of the portfolio${a.wX > 0.2 ? ", so this swap changes the portfolio a lot" : ""}.`;
+  $("taxLine").innerHTML = html;
+}
+
+function renderProjection() {
+  const a = state.analysis;
+  if (a.months.length < 24) {
+    $("projNote").textContent = `${a.ySym} and ${a.x.symbol} need at least two years of shared history to project.`;
+    $("projTable").innerHTML = "";
+    if (state.charts.projChart) { state.charts.projChart.destroy(); delete state.charts.projChart; }
+    $("projLegend").innerHTML = "";
+    return;
+  }
+  const y = state.horizon;
+  const p = project(a, y, taxRate());
+  const yrs = (p.sampleMonths / 12).toFixed(p.sampleMonths % 12 ? 1 : 0);
+  $("projNote").textContent = `A range of outcomes built by replaying ${SIMS.toLocaleString()} random sequences of this portfolio's actual monthly returns from the last ${yrs} years (since ${keyLabel(p.sampleFrom - 1)}). Both versions face the same months each time, so the difference comes only from the swap and the tax. The past may not repeat.`;
+
+  const end = (b) => b[b.length - 1];
+  const ec = end(p.bands.cur), es = end(p.bands.swp);
+  const r = (label, i) => `<tr><td>${label}</td><td class="num">${usd(ec[i])}</td><td class="num">${usd(es[i])}</td><td class="num ${cls(es[i] - ec[i])}">${es[i] - ec[i] >= 0 ? "+" : ""}${usd(es[i] - ec[i])}</td></tr>`;
+  $("projTable").innerHTML = `
+    <thead><tr><th>In ${y} year${y > 1 ? "s" : ""}</th><th class="num">Portfolio as is</th><th class="num">With ${esc(a.ySym)}</th><th class="num">Difference</th></tr></thead>
+    <tbody>
+      <tr><td>Starting value (after tax)</td><td class="num">${usd(p.v0c)}</td><td class="num">${usd(p.v0s)}</td><td class="num ${p.v0s < p.v0c ? "down" : ""}">${p.v0s === p.v0c ? "—" : usd(p.v0s - p.v0c)}</td></tr>
+      ${r("Weak outcome (1 in 10 do worse)", 0)}
+      ${r("Middle outcome", 1)}
+      ${r("Strong outcome (1 in 10 do better)", 2)}
+      <tr><td colspan="4"><b>${Math.round(p.ahead * 100)}%</b> of simulations end with the ${esc(a.ySym)} version ahead${p.tax > 0 ? ", after paying the tax" : ""}.</td></tr>
+    </tbody>`;
+
+  const labels = Array.from({ length: y * 12 + 1 }, (_, m) => (m % 12 === 0 ? `Year ${m / 12}` : `Month ${m}`));
+  const col = (b, i) => b.map((v) => v[i]);
+  const ds = [
+    line("Portfolio as is, strong", col(p.bands.cur, 2), "transparent", { bandEdge: true, borderWidth: 0, pointHoverRadius: 0, fill: "+1", backgroundColor: BAND.cur }),
+    line("Portfolio as is, weak", col(p.bands.cur, 0), "transparent", { bandEdge: true, borderWidth: 0, pointHoverRadius: 0 }),
+    line(`With ${a.ySym}, strong`, col(p.bands.swp, 2), "transparent", { bandEdge: true, borderWidth: 0, pointHoverRadius: 0, fill: "+1", backgroundColor: BAND.swp }),
+    line(`With ${a.ySym}, weak`, col(p.bands.swp, 0), "transparent", { bandEdge: true, borderWidth: 0, pointHoverRadius: 0 }),
+    line("Portfolio as is, middle", col(p.bands.cur, 1), C.cur),
+    line(`With ${a.ySym}, middle`, col(p.bands.swp, 1), C.swap),
+  ];
+  lineChart("projChart", labels, ds, (v) => usd(v));
+  state.charts.projChart.options.scales.x.ticks.callback = function (v, i) { return i % 12 === 0 ? this.getLabelForValue(v) : ""; };
+  state.charts.projChart.options.scales.x.ticks.maxTicksLimit = undefined;
+  state.charts.projChart.options.scales.x.ticks.autoSkip = false;
+  state.charts.projChart.options.scales.x.ticks.maxRotation = 0;
+  state.charts.projChart.update();
+  $("projLegend").innerHTML = legend([["Portfolio as is, middle outcome", C.cur], [`With ${a.ySym}, middle outcome`, C.swap]]) +
+    `<span>Shaded: weak to strong outcomes</span>`;
+}
+
+function taxRate() {
+  const v = parseFloat($("taxIn").value);
+  return isFinite(v) && v > 0 ? Math.min(v, 100) / 100 : 0;
+}
+
+function renderResults() {
+  renderTax();
+  renderBacktest();
+  renderProjection();
+  renderHoldings();
+}
+
+// ---------------------------------------------------------------- wiring
+
+async function runSwap() {
+  const xSym = $("sellSel").value;
+  const ySym = cleanSym($("buyIn").value);
+  $("swapMsg").innerHTML = "";
+  if (!xSym) return;
+  if (!/^[A-Z0-9.\-]{1,10}$/.test(ySym)) { $("swapMsg").innerHTML = `<div class="error">Enter the ticker to buy instead.</div>`; return; }
+  if (ySym === xSym) { $("swapMsg").innerHTML = `<div class="error">Choose a different stock to buy than the one you're selling.</div>`; return; }
+  $("runBtn").disabled = true;
+  $("runBtn").textContent = "Loading…";
+  const s = await fetchSeries(ySym);
+  $("runBtn").disabled = false;
+  $("runBtn").textContent = "Compare";
+  if (!s || !s.map) {
+    const limited = /429|hourly|allocation/i.test(s && s.error);
+    $("swapMsg").innerHTML = `<div class="error">${limited
+      ? "Tiingo's hourly limit of 50 data requests has been reached. Try again in an hour."
+      : `Couldn't find price history for ${esc(ySym)}. Check the ticker.`}</div>`;
+    return;
+  }
+  state.analysis = analyze(xSym, ySym);
+  if (state.analysis.months.length < 6) {
+    $("swapMsg").innerHTML = `<div class="error">${esc(xSym)} and ${esc(ySym)} have less than six months of history in common, so there's nothing to compare yet.</div>`;
+    $("results").hidden = true;
+    return;
+  }
+  $("results").hidden = false;
+  renderResults();
+  $("results").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+}
+
+function seg(id, key, render) {
+  $(id).querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    state[key] = Number(b.dataset.y);
+    $(id).querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    if (state.analysis) render();
+  }));
+}
+
+function readFile(file) {
+  if (!file) return;
+  $("fileName").textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      loadHoldings(holdingsFromCSV(String(reader.result)), `From ${file.name}`);
+    } catch (e) {
+      $("loadMsg").innerHTML = `<div class="error">${esc(e.message)}</div>`;
+    }
+  };
+  reader.readAsText(file);
+}
+
+const drop = $("drop");
+drop.addEventListener("click", () => $("file").click());
+drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); readFile(e.dataTransfer.files[0]); });
+$("file").addEventListener("change", (e) => { readFile(e.target.files[0]); e.target.value = ""; });
+$("manualBtn").addEventListener("click", () => {
+  try {
+    loadHoldings(holdingsFromText($("manual").value), "Entered by hand");
+  } catch (e) {
+    $("loadMsg").innerHTML = `<div class="error">${esc(e.message)}</div>`;
+  }
+});
+$("runBtn").addEventListener("click", runSwap);
+$("buyIn").addEventListener("keydown", (e) => { if (e.key === "Enter") runSwap(); });
+$("taxIn").addEventListener("change", () => { if (state.analysis) { renderTax(); renderProjection(); } });
+seg("periodSeg", "period", renderBacktest);
+seg("horizonSeg", "horizon", renderProjection);

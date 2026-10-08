@@ -35,3 +35,8 @@ The free plan allows 50 requests an hour and 1,000 a day. To stay well under tha
 - Live prices use one request for all 22 stocks, cached on Netlify for 5 minutes (at most ~12 an hour).
 - 20-year history uses 23 requests, cached on Netlify for 24 hours.
 - Company names and the 22 holdings are listed in `portfolio.mjs`, so no requests are spent on them.
+
+## Analyze a portfolio (`/analyze.html`)
+- Import a custodian positions CSV (any file with Symbol and Quantity columns, including RBC exports) or type holdings in. Files are read in the browser and never uploaded.
+- Pick a position to sell and a ticker to buy instead. The page shows a 1/3/5/10-year backtest and a forward range of outcomes (resampled historical monthly returns), including estimated tax on the sale.
+- Each holding uses one Tiingo request, cached for 24 hours. A 30-holding portfolio uses most of the free plan's 50 requests an hour the first time it loads.

@@ -90,7 +90,11 @@
   footer { border-top: 1px solid var(--rule); padding: 20px 0 40px; font-size: 0.8125rem; color: var(--slate); }
   footer p { max-width: 90ch; margin: 0 0 8px; }
 
-  button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+  nav.pages { display: flex; gap: 24px; border-bottom: 1px solid var(--rule); margin-top: 12px; }
+  nav.pages a { color: var(--slate); text-decoration: none; font-weight: 500; font-size: 0.9375rem; padding: 10px 0; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  nav.pages a:hover { color: var(--ink); }
+  nav.pages a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
 
   @media (max-width: 720px) {
     .compare { grid-template-columns: 1fr; }
@@ -113,6 +117,10 @@
       <button class="ghost" id="refreshBtn" type="button">Refresh</button>
     </div>
   </header>
+  <nav class="pages" aria-label="Pages">
+    <a href="/" aria-current="page">Sector portfolio</a>
+    <a href="/analyze.html">Analyze a portfolio</a>
+  </nav>
 
   <section class="hero" aria-live="polite">
     <div class="periods" role="group" aria-label="Backtest period">
