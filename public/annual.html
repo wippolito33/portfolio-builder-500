@@ -150,7 +150,12 @@
 
   <section>
     <h2>Annual Sector Select</h2>
-    <p class="lede">Every January 1, buy the two largest stocks in each of the 11 sectors in equal amounts and hold them for the year. The next January, sell anything that dropped out of the top two and rebalance. This tests the last five years, starting January 2022.</p>
+    <p class="lede">Every January 1, buy the two largest stocks in each of the 11 sectors in equal amounts and hold them for the year. The next January, sell anything that dropped out of the top two and rebalance.</p>
+    <div class="seg" role="group" aria-label="Backtest period" id="spanSeg">
+      <button type="button" data-y="5" aria-pressed="false">5 yrs</button>
+      <button type="button" data-y="10" aria-pressed="false">10 yrs</button>
+      <button type="button" data-y="20" aria-pressed="true">20 yrs</button>
+    </div>
     <div class="progress" id="progress"></div>
     <div id="msg"></div>
   </section>
@@ -175,8 +180,19 @@
     </div>
   </section>
 
+  <section id="months" hidden>
+    <h2>Which month to rebalance?</h2>
+    <p class="lede" id="monthLede"></p>
+    <div class="chart-box" style="height:300px"><canvas id="monthChart" aria-label="Return per year by rebalance month"></canvas></div>
+    <div class="legend" id="monthLegend"></div>
+    <div class="table-scroll" style="margin-top:16px">
+      <table class="compare periods-table" id="monthTable"></table>
+    </div>
+    <p class="note">Each month uses the same yearly picks, so only the timing differs. Splitting the period in half is a quick check: a month that is genuinely better should rank near the top in both halves. With about 20 yearly rebalances per month, differences of a fraction of a point a year can easily be luck.</p>
+  </section>
+
   <footer>
-    <p>Hypothetical, backtested results for internal research only. Each year's picks are an approximation of the two largest companies per sector at the start of that year, not exact historical market-cap rankings. Equal weight at each January rebalance, buy-and-hold within the year, dividends reinvested; no taxes, fees or trading costs. In a taxable account, each January's sales would realize gains. "Today's 22, held since 2022" uses hindsight, since it holds companies chosen by their size today. Past performance does not guarantee future results.</p>
+    <p>Hypothetical, backtested results for internal research only. Each year's picks are an approximation of the two largest companies per sector at the start of that year, not exact historical market-cap rankings, and they are rougher before 2015. Today's sector definitions are applied to every year. Companies that no longer trade are replaced by the next-largest that still does, which flatters the results (survivorship bias). Equal weight at each January rebalance, buy-and-hold within the year, dividends reinvested; no taxes, fees or trading costs. In a taxable account, each January's sales would realize gains. "Today's 22, held since 2022" uses hindsight, since it holds companies chosen by their size today. Past performance does not guarantee future results.</p>
     <p>Market data from Tiingo and Twelve Data. Not investment advice. Review with compliance before sharing any output with clients.</p>
   </footer>
 </div>
