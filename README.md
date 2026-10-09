@@ -58,3 +58,7 @@ The free plan allows 50 requests an hour and 1,000 a day. To stay well under tha
 - Monthly history for every stock is saved in Netlify Blobs (store `price-history`) and refreshed at most once every 20 hours, so data providers are only called for stocks the site hasn't seen before. If a provider's limit is hit, the saved copy is used.
 - `netlify/functions/refresh-history.mjs` runs every weekday at 22:30 UTC to refresh the 22 sector stocks, SPY, and the stalest other saved stocks (up to 40 requests).
 - The 22 sector stocks are listed in `netlify/lib/sectors.mjs`.
+
+## Annual Sector Select (`/annual.html`)
+- Every January 1 (December close), buys the two largest stocks per sector in equal amounts and holds for the year, starting January 2022. Compared with the S&P 500 and with today's 22 held since 2022.
+- Each year's picks are in `public/annual-picks.js`. They are approximate rankings, not a market-cap database; edit them there.

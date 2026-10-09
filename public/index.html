@@ -109,7 +109,8 @@
   .contact a:hover { border-bottom-color: var(--ink); }
   @media (max-width: 720px) { footer { grid-template-columns: 1fr; } }
 
-  nav.pages { display: flex; gap: 24px; border-bottom: 1px solid var(--rule); margin-top: 12px; }
+  nav.pages { display: flex; gap: 24px; border-bottom: 1px solid var(--rule); margin-top: 12px; overflow-x: auto; scrollbar-width: none; }
+  nav.pages a { white-space: nowrap; }
   nav.pages a { color: var(--slate); text-decoration: none; font-weight: 500; font-size: 0.9375rem; padding: 10px 0; border-bottom: 2px solid transparent; margin-bottom: -1px; }
   nav.pages a:hover { color: var(--ink); }
   nav.pages a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
@@ -142,6 +143,7 @@
     <a href="/" aria-current="page">Sector portfolio</a>
     <a href="/analyze.html">Analyze a portfolio</a>
     <a href="/compare.html">Compare</a>
+    <a href="/annual.html">Annual Sector Select</a>
   </nav>
 
   <section class="hero" aria-live="polite">

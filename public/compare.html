@@ -31,7 +31,8 @@
   header.top { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 28px 0 8px; flex-wrap: wrap; }
   .brand { font: 400 2.25rem/1 var(--serif); margin: 0; letter-spacing: -0.01em; }
   .firm { color: var(--slate); font-size: 0.875rem; margin-top: 6px; }
-  nav.pages { display: flex; gap: 24px; border-bottom: 1px solid var(--rule); margin-top: 12px; }
+  nav.pages { display: flex; gap: 24px; border-bottom: 1px solid var(--rule); margin-top: 12px; overflow-x: auto; scrollbar-width: none; }
+  nav.pages a { white-space: nowrap; }
   nav.pages a { color: var(--slate); text-decoration: none; font-weight: 500; font-size: 0.9375rem; padding: 10px 0; border-bottom: 2px solid transparent; margin-bottom: -1px; }
   nav.pages a:hover { color: var(--ink); }
   nav.pages a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
@@ -140,6 +141,7 @@
     <a href="/">Sector portfolio</a>
     <a href="/analyze.html">Analyze a portfolio</a>
     <a href="/compare.html" aria-current="page">Compare</a>
+    <a href="/annual.html">Annual Sector Select</a>
   </nav>
 
   <section id="choose">
