@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Portfolio Builder 500</title>
+<title>Aggressive Growth Model · Portfolio Builder 500</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -99,6 +99,13 @@
   .mix-table tr:last-child td { border-bottom: 0; }
   .mix-table .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; vertical-align: -1px; margin-right: 8px; }
   .mix-table .tk { color: var(--slate); font-size: 0.8125rem; }
+  .picks td, .picks th { text-align: center; white-space: nowrap; }
+  .picks td:first-child, .picks th:first-child { text-align: left; }
+  .picks .new { color: var(--brass); font-weight: 600; }
+  .year-tables h3 { font: 600 1rem/1.3 var(--sans); margin: 28px 0 8px; }
+  .msg { background: #FBEFD9; color: #6B4510; border-radius: 8px; padding: 12px 16px; margin: 16px 0 0; font-size: 0.9375rem; }
+  select.year { font: 500 0.875rem var(--sans); color: var(--ink); border: 1px solid var(--ink); border-radius: 999px; padding: 6px 12px; background: var(--surface); }
+  .mix-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   footer { border-top: 1px solid var(--rule); padding: 20px 0 40px; font-size: 0.8125rem; color: var(--slate); }
   footer p { max-width: 90ch; margin: 0 0 8px; }
   footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 32px; align-items: end; }
@@ -124,6 +131,16 @@
     .pie-box { height: 280px; }
     td.sector { width: auto; }
   }
+
+  .mix-table td.num { text-align: right; white-space: nowrap; }
+  .mix-table .role { color: var(--slate); font-size: 0.8125rem; }
+  .mix-table tr.sub td { color: var(--slate); font-size: 0.875rem; border-bottom: 0; }
+  .mix-grid.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; }
+  .holdings-table td.sleeve { color: var(--slate); font-size: 0.875rem; width: 200px; }
+  .holdings-table .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-right: 8px; vertical-align: 0; }
+  ul.rules { margin: 0; padding-left: 20px; max-width: 72ch; display: grid; gap: 6px; }
+  section.notes { padding: 32px 0 28px; }
+  @media (max-width: 900px) { .mix-grid.two { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>
 <body>
@@ -135,16 +152,15 @@
     </div>
     <div class="status">
       <span class="dot" id="dot"></span>
-      <span id="statusText">Connecting to market data…</span>
-      <button class="ghost" id="refreshBtn" type="button">Refresh</button>
+      <span id="statusText">Loading price history…</span>
     </div>
   </header>
   <nav class="pages" aria-label="Pages">
-    <a href="/" aria-current="page">Sector portfolio</a>
+    <a href="/">Sector portfolio</a>
     <a href="/analyze.html">Analyze a portfolio</a>
     <a href="/compare.html">Compare</a>
     <a href="/annual.html">Annual Sector Select</a>
-    <a href="/growth.html">Aggressive Growth Model</a>
+    <a href="/growth.html" aria-current="page">Aggressive Growth Model</a>
   </nav>
 
   <section class="hero" aria-live="polite">
@@ -157,45 +173,57 @@
     </div>
     <div id="heroBody"><p class="loading">Loading 20 years of price history…</p></div>
     <div class="chart-box"><canvas id="chart" aria-label="Growth of $10,000"></canvas></div>
+    <div id="msg"></div>
   </section>
 
   <section class="mix" id="mixSection" hidden>
     <div class="section-head">
-      <h2>Sector diversification</h2>
+      <h2>Allocation</h2>
       <div class="seg" role="group" aria-label="Show weights" id="mixSeg">
-        <button type="button" data-v="start" aria-pressed="true">At the start</button>
+        <button type="button" data-v="target" aria-pressed="true">Target</button>
         <button type="button" data-v="today" aria-pressed="false">Today</button>
       </div>
     </div>
     <p class="note" id="mixNote"></p>
-    <div class="mix-grid">
-      <div class="pie-box"><canvas id="pie" aria-label="Portfolio weight by sector"></canvas></div>
+    <div class="mix-grid two">
+      <div class="pie-box"><canvas id="pie" aria-label="Portfolio weight by sleeve"></canvas></div>
       <table class="mix-table" id="mixTable"></table>
     </div>
   </section>
 
-  <section class="holdings">
+  <section class="holdings" id="holdingsSection" hidden>
     <div class="section-head">
-      <h2>The 22 holdings</h2>
-      <span class="note" id="holdNote">Two largest stocks in each of the 11 S&amp;P 500 sectors</span>
+      <h2>Holdings</h2>
+      <span class="note" id="quoteNote"></span>
     </div>
     <div class="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th>Sector</th><th>Stock</th><th class="num">Price</th>
-            <th class="num">Today</th><th class="num" id="retHead">10-yr return</th><th>Backtest</th>
-          </tr>
-        </thead>
-        <tbody id="rows"></tbody>
-      </table>
+      <table class="holdings-table" id="holdingsTable"></table>
     </div>
+  </section>
+
+  <section class="holdings" id="yearsSection" hidden>
+    <div class="section-head">
+      <h2>Year by year</h2>
+      <span class="note">Rebalanced to target weights every January</span>
+    </div>
+    <div class="table-scroll">
+      <table id="yearTable"></table>
+    </div>
+  </section>
+
+  <section class="notes">
+    <h2 style="margin-bottom:12px">Rebalancing</h2>
+    <ul class="rules">
+      <li>Rebalance annually, or when any sleeve drifts more than 5 percentage points from target.</li>
+      <li>Trim winners back to target so the portfolio doesn't turn into a concentrated bet.</li>
+      <li>Reassess sleeve weights if the client's time horizon or risk tolerance changes.</li>
+    </ul>
   </section>
 
   <footer>
     <div>
-    <p>Hypothetical, backtested results for internal research only. Holdings are chosen by today's market cap and the two worst performers are removed with hindsight, so results are subject to survivorship and look-ahead bias and overstate what an investor could have achieved in real time. Assumes buy-and-hold with dividends reinvested, no rebalancing, taxes, fees or trading costs. Past performance does not guarantee future results.</p>
-    <p>Market data from Tiingo and Twelve Data, may be delayed. Not investment advice. Review with compliance before sharing any output with clients or prospects.</p>
+    <p>Hypothetical, backtested results for internal research only. The holdings were chosen today, with knowledge of which companies grew into large S&amp;P 500 members, so the backtest benefits from hindsight and survivorship bias and overstates what the model would have earned in real time. Stocks without price history at a rebalance date are left out and the rest of their sleeve is equal-weighted; a sleeve with no history is spread across the others. Rebalanced to target each January, buy-and-hold within the year, dividends reinvested; no taxes, fees or trading costs. Past performance does not guarantee future results. Investing involves risk, including possible loss of principal.</p>
+    <p>Market data from Tiingo and Twelve Data, may be delayed. Illustrative model for discussion only; not a recommendation or an offer. Review with compliance before sharing any output with clients or prospects.</p>
     </div>
     <address class="contact">
       <img src="bill-ippolito.jpg?v=3" alt="Bill Ippolito" width="104" height="104" />
@@ -212,6 +240,8 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="app.js"></script>
+<script src="common.js"></script>
+<script src="growth-model.js"></script>
+<script src="growth.js"></script>
 </body>
 </html>
