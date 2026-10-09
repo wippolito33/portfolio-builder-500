@@ -60,6 +60,5 @@ The free plan allows 50 requests an hour and 1,000 a day. To stay well under tha
 - The 22 sector stocks are listed in `netlify/lib/sectors.mjs`.
 
 ## Annual Sector Select (`/annual.html`)
-- Every January 1 (December close), buys the two largest stocks per sector in equal amounts and holds for the year, over 5, 10 or 20 years. Compared with the S&P 500 and with today's 22 held over the same span.
-- "Which month to rebalance?" runs the same strategy with each of the 12 months as the rebalance month over the full 20 years, with a first-half/second-half split as a luck check.
+- Every January 1 (December close), rebalances into that year's two largest stocks per sector in equal amounts and holds for the year, over 1, 3, 5, 10 or 20 years. Compared with the S&P 500 and with today's 22 held over the same span. Includes a sector pie for any year (when bought or at year end), a year-by-year table and the holdings grid. Same layout as the Sector portfolio page.
 - Each year's picks (2006 onward) are in `public/annual-picks.js`. They are approximate rankings using today's sector definitions, not a market-cap database; edit them there.

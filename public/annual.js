@@ -1,32 +1,55 @@
-// Annual Sector Select: each year, rebalance into that year's top two stocks
-// per sector (equal weight) and hold until the next rebalance.
+// Annual Sector Select: every January, rebalance into that year's two largest
+// stocks per sector (equal weight) and hold until the next January.
 //
-// Month keys are year*12 + monthIndex (Jan = 0). "Rebalancing at the start of
-// month M" uses the close of the month before. The picks used are the ones for
-// the calendar year the rebalance falls in.
+// Month keys are year*12 + monthIndex (Jan = 0). Rebalancing "on January 1"
+// uses the December close. The picks used are the ones for the calendar year
+// the holding period falls in.
 
 const START = 10000;
 const YEARS = Object.keys(ANNUAL_PICKS).map(Number).sort((a, b) => a - b);
-const COL = { annual: C.swap, today: "#52606D", bench: C.bench, bar: C.cur };
-const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const SPANS = { 5: 2022, 10: 2017, 20: 2006 };
+const COLORS = { strategy: "#B7791F", today: "#52606D", bench: "#102A43" };
+const SECTOR_COLORS = {
+  "Information Technology": "#2a78d6",
+  "Communication Services": "#eb6834",
+  "Consumer Discretionary": "#1baf7a",
+  "Financials": "#eda100",
+  "Health Care": "#e87ba4",
+  "Consumer Staples": "#008300",
+  "Energy": "#4a3aa7",
+  "Industrials": "#e34948",
+  "Materials": "#13a3c6",
+  "Utilities": "#9a6b00",
+  "Real Estate": "#b45fb0",
+};
+const SECTOR_ORDER = Object.keys(SECTOR_COLORS);
 
-const st = { span: 20 };
+const st = { years: 10, run: null, mixYear: null, mixView: "start" };
 
-const picksFor = (year) => Object.values(ANNUAL_PICKS[Math.min(Math.max(year, YEARS[0]), YEARS[YEARS.length - 1])]).flat();
-const yearOfRebalance = (k) => Math.floor((k + 1) / 12);          // the close at k starts month k+1
-const isRebalance = (k, month) => (k + 1) % 12 === month;          // month: 0 = January
+const clampYear = (y) => Math.min(Math.max(y, YEARS[0]), YEARS[YEARS.length - 1]);
+const picksFor = (year) => Object.values(ANNUAL_PICKS[clampYear(year)]).flat();
+const sectorOf = (year, sym) => Object.entries(ANNUAL_PICKS[clampYear(year)]).find(([, l]) => l.includes(sym))[0];
+const yearOf = (k) => Math.floor((k + 1) / 12);      // the close at k starts month k+1
+const isJanRebalance = (k) => (k + 1) % 12 === 0;    // December close
 
-// Runs the strategy from startK to endK, rebalancing at the start of `month`.
-// It also buys on day one at startK, using that date's picks.
-function simulate(month, startK, endK) {
+function setStatus(kind, text) {
+  $("dot").className = "dot " + (kind || "");
+  $("statusText").textContent = text;
+}
+function textOn(hex) {
+  const n = parseInt(hex.slice(1), 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? "#102A43" : "#FFFFFF";
+}
+
+// ---------------------------------------------------------------- the strategy
+
+// Buys on day one at startK with that date's picks, then rebalances every January.
+function simulate(startK, endK) {
   let value = START;
   const path = [value];
   const periods = [];
   let cur = null;
-
   const buy = (k) => {
-    const year = yearOfRebalance(k);
+    const year = yearOf(k);
     const wanted = picksFor(year);
     const held = wanted.filter((s) => DATA.series[s] && DATA.series[s].first <= k && priceAt(DATA.series[s], k));
     cur = {
@@ -36,223 +59,251 @@ function simulate(month, startK, endK) {
     };
     periods.push(cur);
   };
-
   buy(startK);
   for (let k = startK + 1; k <= endK; k++) {
     value = cur.shares.reduce((a, h) => a + h.n * priceAt(DATA.series[h.s], k), 0);
     path.push(value);
-    if (k < endK && isRebalance(k, month)) {
-      cur.endK = k; cur.ret = value / cur.startValue - 1;
-      buy(k);
-    }
+    if (k < endK && isJanRebalance(k)) { cur.endK = k; cur.ret = value / cur.startValue - 1; buy(k); }
   }
   cur.endK = endK; cur.ret = value / cur.startValue - 1;
   return { path, periods };
 }
 
-function benchPath(startK, endK) {
-  const p = [];
-  for (let k = startK; k <= endK; k++) p.push(START * priceAt(DATA.series[BENCH], k) / priceAt(DATA.series[BENCH], startK));
-  return p;
-}
-const toRets = (p) => p.slice(1).map((v, i) => v / p[i] - 1);
-const cagr = (p, months) => Math.pow(p[p.length - 1] / p[0], 12 / months) - 1;
-
-// ---------------------------------------------------------------- main backtest (January)
-
-function renderMain() {
+function backtest(years) {
   const endK = DATA.series[BENCH].last;
-  const startK = (SPANS[st.span] - 1) * 12 + 11;   // December close before the first year
-  const labels = [];
-  for (let k = startK; k <= endK; k++) labels.push(keyLabel(k));
-
-  const { path, periods } = simulate(0, startK, endK);
+  const startK = endK - years * 12;
+  const { path, periods } = simulate(startK, endK);
   const latest = picksFor(YEARS[YEARS.length - 1]);
   const today = latest.filter((s) => DATA.series[s] && DATA.series[s].first <= startK);
-  const todayPath = [];
+  const todayPath = [], benchPath = [], labels = [];
   for (let k = startK; k <= endK; k++) {
+    labels.push(keyLabel(k));
     todayPath.push(today.reduce((a, s) => a + (START / today.length) * priceAt(DATA.series[s], k) / priceAt(DATA.series[s], startK), 0));
+    benchPath.push(START * priceAt(DATA.series[BENCH], k) / priceAt(DATA.series[BENCH], startK));
   }
-  const bPath = benchPath(startK, endK);
-  const sA = stats(toRets(path)), sT = stats(toRets(todayPath)), sB = stats(toRets(bPath));
-  const startYear = SPANS[st.span];
+  const toRets = (p) => p.slice(1).map((v, i) => v / p[i] - 1);
+  return {
+    years, startK, endK, labels, periods, today, todayMissing: latest.filter((s) => !today.includes(s)),
+    strategy: { values: path, ...stats(toRets(path)) },
+    held: { values: todayPath, ...stats(toRets(todayPath)) },
+    bench: { values: benchPath, ...stats(toRets(benchPath)) },
+  };
+}
 
-  $("headline").textContent = `$10,000 put into Annual Sector Select in January ${startYear} is worth ${usd(sA.end)} today, compared with ${usd(sB.end)} in the S&P 500.`;
+// ---------------------------------------------------------------- render
 
-  const todayLabel = `Today's ${today.length}, held since Jan ${startYear}`;
-  const cols = [["Annual Sector Select", sA], [todayLabel, sT], ["S&P 500 (SPY)", sB]];
-  const row = (label, f, c) => `<tr><td>${label}</td>${cols.map(([, x]) => `<td class="num ${c ? cls(c(x)) : ""}">${f(x)}</td>`).join("")}</tr>`;
-  $("sumTable").innerHTML = `
-    <thead><tr><th>${keyLabel(startK)} to ${keyLabel(endK)}</th>${cols.map(([h]) => `<th class="num">${esc(h)}</th>`).join("")}</tr></thead>
-    <tbody>
-      ${row("$10,000 became", (x) => usd(x.end))}
-      ${row("Total return", (x) => pct(x.total, 0), (x) => x.total)}
-      ${row("Per year", (x) => pct(x.cagr), (x) => x.cagr)}
-      ${row("Volatility (annual)", (x) => pct(x.vol, 1, false))}
-      ${row("Worst drop", (x) => pct(x.mdd), (x) => x.mdd)}
-    </tbody>`;
+function renderHero(bt) {
+  const rebalances = bt.periods.length - 1;
+  let changes = 0;
+  for (let i = 1; i < bt.periods.length; i++) changes += bt.periods[i].wanted.filter((s) => !bt.periods[i - 1].wanted.includes(s)).length;
+  const card = (title, color, x, dash) => `
+    <div>
+      <h3><span class="swatch" style="background:${color}${dash ? ";opacity:.75" : ""}"></span>${esc(title)}</h3>
+      <div class="big">${usd(x.end)}</div>
+      <dl>
+        <dt>Total return</dt><dd class="${cls(x.total)}">${pct(x.total)}</dd>
+        <dt>Annualized</dt><dd class="${cls(x.cagr)}">${pct(x.cagr, 2)}</dd>
+        <dt>Worst drop</dt><dd class="down">${pct(x.mdd)}</dd>
+      </dl>
+    </div>`;
+  const ago = bt.years === 1 ? "a year" : `${bt.years} years`;
+  $("heroBody").innerHTML = `
+    <h2 class="headline">$10,000 invested ${ago} ago is worth <span class="amt">${usd(bt.strategy.end)}</span> today</h2>
+    <p class="sub">Started ${keyLabel(bt.startK)} with that year's top two stocks per sector, equal weight. ${
+      rebalances ? `Rebalanced ${rebalances === 1 ? "once" : rebalances + " times"} each January since, swapping ${changes} ${changes === 1 ? "stock" : "stocks"} in total.` : "No January rebalance yet in this period."
+    } Dividends reinvested.</p>
+    <div class="compare">
+      ${card("Annual Sector Select", COLORS.strategy, bt.strategy)}
+      ${card(`Today's ${bt.today.length}, held the whole time`, COLORS.today, bt.held)}
+      ${card("S&P 500 (SPY)", COLORS.bench, bt.bench)}
+    </div>`;
+}
 
-  lineChart("growthChart", labels, [
-    line("Annual Sector Select", path, COL.annual),
-    line(todayLabel, todayPath, COL.today, { borderWidth: 1.5, borderDash: [2, 3] }),
-    line("S&P 500 (SPY)", bPath, COL.bench, { borderWidth: 1.5, borderDash: [6, 4] }),
-  ], (v) => usd(v));
-  const todayMissing = latest.filter((s) => !today.includes(s));
-  $("growthLegend").innerHTML = legend([
-    ["Annual Sector Select", COL.annual],
-    [`${todayLabel} (dotted)`, COL.today, true],
-    ["S&P 500 (dashed)", COL.bench, true],
-  ]) + (todayMissing.length ? `<span>${todayMissing.join(", ")} left out of the dotted line: no history back to Jan ${startYear}.</span>` : "");
+function renderChart(bt) {
+  const ds = (label, data, color, width, dash) => ({
+    label, data, borderColor: color, backgroundColor: color, borderWidth: width, borderDash: dash || [],
+    pointRadius: 0, pointHoverRadius: 4, tension: 0.15,
+  });
+  if (CHARTS.chart) CHARTS.chart.destroy();
+  CHARTS.chart = new Chart($("chart"), {
+    type: "line",
+    data: {
+      labels: bt.labels,
+      datasets: [
+        ds("Annual Sector Select", bt.strategy.values, COLORS.strategy, 2.5),
+        ds(`Today's ${bt.today.length}, held the whole time`, bt.held.values, COLORS.today, 1.5, [5, 4]),
+        ds("S&P 500 (SPY)", bt.bench.values, COLORS.bench, 1.5),
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "bottom", align: "start", labels: { boxWidth: 14, boxHeight: 3, font: { family: "Instrument Sans" }, color: "#52606D" } },
+        tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${usd(c.parsed.y)}` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, color: "#52606D", font: { family: "Instrument Sans" } } },
+        y: { grid: { color: "#E6EBF0" }, ticks: { color: "#52606D", font: { family: "Instrument Sans" }, callback: (v) => usd(v) } },
+      },
+    },
+  });
+  const notes = [];
+  if (bt.todayMissing.length) notes.push(`${bt.todayMissing.join(", ")} ${bt.todayMissing.length === 1 ? "is" : "are"} left out of "Today's ${bt.today.length}" because ${bt.todayMissing.length === 1 ? "it has" : "they have"} no price history back to ${keyLabel(bt.startK)}.`);
+  const gaps = bt.periods.filter((p) => p.missing.length);
+  if (gaps.length) notes.push(gaps.map((p) => `${p.year}: no price history for ${p.missing.join(", ")}, so that year held ${p.held.length}.`).join(" "));
+  $("msg").innerHTML = notes.length ? `<p class="note" style="margin-top:4px">${esc(notes.join(" "))}</p>` : "";
+}
 
+function renderYears(bt) {
   $("yearTable").innerHTML = `
     <thead><tr><th>Year</th><th class="num">Annual Sector Select</th><th class="num">S&amp;P 500</th><th class="num">Difference</th><th>Bought in January</th><th>Sold in January</th></tr></thead>
-    <tbody>${periods.map((p, i) => {
+    <tbody>${bt.periods.map((p, i) => {
       const spy = priceAt(DATA.series[BENCH], p.endK) / priceAt(DATA.series[BENCH], p.k) - 1;
-      const prev = i ? periods[i - 1].wanted : null;
+      const prev = i ? bt.periods[i - 1].wanted : null;
       const added = prev ? p.wanted.filter((s) => !prev.includes(s)) : [];
       const removed = prev ? prev.filter((s) => !p.wanted.includes(s)) : [];
+      const partialStart = i === 0 && !isJanRebalance(p.k);
+      const partialEnd = p.endK - p.k < 12 && i === bt.periods.length - 1;
       return `<tr>
-        <td>${p.year}${p.endK - p.k < 12 ? " (so far)" : ""}</td>
+        <td>${p.year}${partialStart ? ` <span class="note">from ${keyLabel(p.k)}</span>` : partialEnd ? ` <span class="note">so far</span>` : ""}</td>
         <td class="num ${cls(p.ret)}">${pct(p.ret)}</td>
         <td class="num ${cls(spy)}">${pct(spy)}</td>
         <td class="num ${cls(p.ret - spy)}">${pct(p.ret - spy)}</td>
-        <td>${i === 0 ? "Starting 22" : added.join(", ") || "No changes"}${p.missing.length ? ` <span class="note">(no data: ${p.missing.join(", ")})</span>` : ""}</td>
+        <td>${i === 0 ? `Starting ${p.held.length}` : added.join(", ") || "No changes"}</td>
         <td>${removed.join(", ") || "—"}</td>
       </tr>`;
     }).join("")}</tbody>`;
 
-  const shown = YEARS.filter((y) => y >= startYear);
-  const sectors = Object.keys(ANNUAL_PICKS[YEARS[0]]);
+  const shown = [...new Set(bt.periods.map((p) => p.year))];
   $("picksTable").innerHTML = `
     <thead><tr><th>Sector</th>${shown.map((y) => `<th>${y}</th>`).join("")}</tr></thead>
-    <tbody>${sectors.map((sec) => `<tr><td>${esc(sec)}</td>${shown.map((y) => {
-      const prev = ANNUAL_PICKS[y - 1] ? ANNUAL_PICKS[y - 1][sec] : null;
-      return `<td>${ANNUAL_PICKS[y][sec].map((s) => `<span class="${prev && y > startYear && !prev.includes(s) ? "new" : ""}">${s}</span>`).join(", ")}</td>`;
+    <tbody>${SECTOR_ORDER.map((sec) => `<tr><td>${esc(sec)}</td>${shown.map((y, i) => {
+      const prev = i ? ANNUAL_PICKS[clampYear(shown[i - 1])][sec] : null;
+      return `<td>${ANNUAL_PICKS[clampYear(y)][sec].map((s) => `<span class="${prev && !prev.includes(s) ? "new" : ""}">${s}</span>`).join(", ")}</td>`;
     }).join("")}</tr>`).join("")}</tbody>`;
 }
 
-// ---------------------------------------------------------------- which month?
+function fillYearSelect(bt) {
+  const years = bt.periods.map((p) => p.year);
+  if (!years.includes(st.mixYear)) st.mixYear = years[years.length - 1];
+  $("mixYear").innerHTML = [...years].reverse().map((y) => `<option value="${y}" ${y === st.mixYear ? "selected" : ""}>${y}</option>`).join("");
+}
 
-function renderMonths() {
-  const endK = DATA.series[BENCH].last;
-  const startK = (YEARS[0] - 1) * 12 + 11;                    // Dec 2005 close
-  const midK = startK + Math.round((endK - startK) / 2);
-  const months = endK - startK;
+function renderMix(bt) {
+  const p = bt.periods.find((x) => x.year === st.mixYear) || bt.periods[bt.periods.length - 1];
+  const isCurrent = p === bt.periods[bt.periods.length - 1];
+  $("mixSeg").querySelector('[data-v="end"]').textContent = isCurrent ? "Today" : "Year end";
 
-  const rows = MONTHS.map((name, m) => {
-    const { path } = simulate(m, startK, endK);
-    const s = stats(toRets(path));
-    const half = midK - startK;
-    return {
-      name, m, end: s.end, cagr: s.cagr, mdd: s.mdd, vol: s.vol,
-      first: cagr(path.slice(0, half + 1), half),
-      second: cagr(path.slice(half), endK - midK),
-    };
-  });
-  const bp = benchPath(startK, endK);
-  const bench = { cagr: cagr(bp, months), first: cagr(bp.slice(0, midK - startK + 1), midK - startK), second: cagr(bp.slice(midK - startK), endK - midK), mdd: stats(toRets(bp)).mdd };
+  const bySector = new Map();
+  for (const h of p.shares) {
+    const v = st.mixView === "end" ? h.n * priceAt(DATA.series[h.s], p.endK) : 1;
+    const sec = sectorOf(p.year, h.s);
+    const e = bySector.get(sec) || { sector: sec, value: 0, syms: [] };
+    e.value += v; e.syms.push(h.s);
+    bySector.set(sec, e);
+  }
+  const total = [...bySector.values()].reduce((a, e) => a + e.value, 0);
+  const rows = [...bySector.values()].map((e) => ({ ...e, w: e.value / total }));
+  if (st.mixView === "end") rows.sort((a, b) => b.w - a.w);
+  else rows.sort((a, b) => SECTOR_ORDER.indexOf(a.sector) - SECTOR_ORDER.indexOf(b.sector));
 
-  const rank = (key) => {
-    const sorted = [...rows].sort((a, b) => b[key] - a[key]);
-    return (r) => sorted.indexOf(r) + 1;
-  };
-  const rAll = rank("cagr"), rFirst = rank("first"), rSecond = rank("second");
-  const best = [...rows].sort((a, b) => b.cagr - a.cagr)[0];
-  const worst = [...rows].sort((a, b) => a.cagr - b.cagr)[0];
-  const spread = best.cagr - worst.cagr;
-  const top3 = (key) => [...rows].sort((a, b) => b[key] - a[key]).slice(0, 3).map((r) => r.name);
-  const overlap = top3("first").filter((n) => top3("second").includes(n));
+  $("mixSection").hidden = false;
+  $("mixNote").textContent = st.mixView === "start"
+    ? `${p.held.length} stocks at ${(100 / p.held.length).toFixed(p.held.length === 22 ? 2 : 2)}% each, bought ${keyLabel(p.k)}. Every sector starts the year at the same weight.`
+    : `Where the money sat at ${isCurrent ? "today's prices" : "the end of " + p.year}, before the next January rebalance. Winners grow into bigger slices.`;
 
-  $("monthLede").textContent =
-    `The same strategy run 12 times, each rebalancing at the start of a different month, all from ${keyLabel(startK)} to ${keyLabel(endK)}. ` +
-    `${best.name} came out best at ${pct(best.cagr, 2, false)} a year and ${worst.name} worst at ${pct(worst.cagr, 2, false)}, a gap of ${(spread * 100).toFixed(2)} points a year. ` +
-    (overlap.length
-      ? `${overlap.join(" and ")} ${overlap.length === 1 ? "was" : "were"} in the top three in both the first and second halves of the period.`
-      : `None of the top three months in the first half stayed in the top three in the second half, which points to luck rather than a real month effect.`);
-
-  $("monthTable").innerHTML = `
-    <thead><tr><th>Rebalance at the start of</th><th class="num">$10,000 became</th><th class="num">Per year</th><th class="num">Rank</th><th class="num">${keyLabel(startK)} to ${keyLabel(midK)}</th><th class="num">${keyLabel(midK)} to ${keyLabel(endK)}</th><th class="num">Worst drop</th></tr></thead>
-    <tbody>${rows.map((r) => `<tr class="${r === best ? "current" : ""}">
-      <td>${r.name}</td>
-      <td class="num">${usd(r.end)}</td>
-      <td class="num ${cls(r.cagr)}">${pct(r.cagr, 2)}</td>
-      <td class="num">${rAll(r)}</td>
-      <td class="num">${pct(r.first, 2)} <span class="cell-sub">rank ${rFirst(r)}</span></td>
-      <td class="num">${pct(r.second, 2)} <span class="cell-sub">rank ${rSecond(r)}</span></td>
-      <td class="num down">${pct(r.mdd)}</td>
-    </tr>`).join("")}
-    <tr><td>S&amp;P 500 (SPY), for reference</td><td class="num">${usd(bp[bp.length - 1])}</td><td class="num ${cls(bench.cagr)}">${pct(bench.cagr, 2)}</td><td></td>
-      <td class="num">${pct(bench.first, 2)}</td><td class="num">${pct(bench.second, 2)}</td><td class="num down">${pct(bench.mdd)}</td></tr>
-    </tbody>`;
-
-  // Bar chart: return per year by rebalance month.
-  if (CHARTS.monthChart) CHARTS.monthChart.destroy();
-  const lo = Math.min(...rows.map((r) => r.cagr), bench.cagr), hi = Math.max(...rows.map((r) => r.cagr), bench.cagr);
-  const pad = Math.max((hi - lo) * 0.6, 0.005);
-  const benchLine = {
-    id: "benchLine",
+  const colors = rows.map((r) => SECTOR_COLORS[r.sector] || "#8A96A3");
+  const narrow = () => $("pie").parentElement.clientWidth < 640;
+  const labelsPlugin = {
+    id: "labels",
     afterDatasetsDraw(chart) {
-      const y = chart.scales.y.getPixelForValue(bench.cagr * 100);
-      const { ctx, chartArea: a } = chart;
+      const { ctx } = chart;
+      const arcs = chart.getDatasetMeta(0).data;
       ctx.save();
-      ctx.strokeStyle = C.bench; ctx.setLineDash([6, 4]); ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.moveTo(a.left, y); ctx.lineTo(a.right, y); ctx.stroke();
-      ctx.setLineDash([]); ctx.fillStyle = "#52606D"; ctx.font = "500 12px 'Instrument Sans', system-ui, sans-serif";
-      ctx.textAlign = "right"; ctx.fillText(`S&P 500 ${pct(bench.cagr, 2, false)}`, a.right, y - 6);
+      if (narrow()) {
+        ctx.font = "600 11px 'Instrument Sans', system-ui, sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        arcs.forEach((arc, i) => {
+          const a = (arc.startAngle + arc.endAngle) / 2, rr = arc.outerRadius * 0.66;
+          ctx.fillStyle = textOn(colors[i]);
+          ctx.fillText(`${Math.round(rows[i].w * 100)}%`, arc.x + Math.cos(a) * rr, arc.y + Math.sin(a) * rr);
+        });
+        ctx.restore();
+        return;
+      }
+      ctx.font = "500 12px 'Instrument Sans', system-ui, sans-serif";
+      ctx.strokeStyle = "#9AA5B1"; ctx.lineWidth = 1;
+      arcs.forEach((arc, i) => {
+        const a = (arc.startAngle + arc.endAngle) / 2, r = arc.outerRadius;
+        const x1 = arc.x + Math.cos(a) * (r + 4), y1 = arc.y + Math.sin(a) * (r + 4);
+        const x2 = arc.x + Math.cos(a) * (r + 16), y2 = arc.y + Math.sin(a) * (r + 16);
+        const right = Math.cos(a) >= 0, x3 = x2 + (right ? 10 : -10);
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y2); ctx.stroke();
+        ctx.fillStyle = "#102A43"; ctx.textAlign = right ? "left" : "right"; ctx.textBaseline = "middle";
+        ctx.fillText(`${rows[i].sector} ${(rows[i].w * 100).toFixed(1)}%`, x3 + (right ? 4 : -4), y2);
+      });
       ctx.restore();
     },
   };
-  CHARTS.monthChart = new Chart($("monthChart"), {
-    type: "bar",
-    data: {
-      labels: rows.map((r) => r.name.slice(0, 3)),
-      datasets: [{ data: rows.map((r) => r.cagr * 100), backgroundColor: rows.map((r) => (r === best ? C.swap : COL.bar)), borderRadius: 4, borderSkipped: "start", maxBarThickness: 36 }],
-    },
+  if (CHARTS.pie) CHARTS.pie.destroy();
+  CHARTS.pie = new Chart($("pie"), {
+    type: "doughnut",
+    data: { labels: rows.map((r) => r.sector), datasets: [{ data: rows.map((r) => r.w * 100), backgroundColor: colors, borderColor: "#F6F8F7", borderWidth: 2, hoverOffset: 8 }] },
     options: {
-      responsive: true, maintainAspectRatio: false, animation: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { title: (c) => rows[c[0].dataIndex].name, label: (c) => `${c.parsed.y.toFixed(2)}% a year, $10,000 became ${usd(rows[c.dataIndex].end)}` } } },
-      scales: {
-        x: { grid: { display: false }, ticks: { color: "#52606D", font: { family: "Instrument Sans" } } },
-        y: { min: Math.floor((lo - pad) * 1000) / 10, max: Math.ceil((hi + pad) * 1000) / 10, grid: { color: "#E6EBF0" }, border: { display: false },
-             ticks: { color: "#52606D", font: { family: "Instrument Sans" }, callback: (v) => v.toFixed(1) + "%" } },
-      },
+      responsive: true, maintainAspectRatio: false, animation: false, cutout: 0,
+      layout: { padding: narrow() ? 8 : { top: 30, bottom: 30, left: 200, right: 200 } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${(rows[c.dataIndex].w * 100).toFixed(1)}%: ${rows[c.dataIndex].syms.join(", ")}` } } },
     },
-    plugins: [benchLine],
+    plugins: [labelsPlugin],
   });
-  $("monthLegend").innerHTML = legend([[`Best month (${best.name})`, C.swap], ["Other months", COL.bar], ["S&P 500 (dashed)", C.bench, true]]) +
-    `<span>The vertical scale is zoomed in, so small differences look larger than they are.</span>`;
+  $("mixTable").innerHTML = `<tbody>${rows.map((r, i) => `<tr>
+    <td><span class="sw" style="background:${colors[i]}"></span>${r.sector}</td>
+    <td class="num">${(r.w * 100).toFixed(1)}%</td>
+    <td class="tk">${r.syms.join(", ")}</td>
+  </tr>`).join("")}</tbody>`;
 }
 
-// ---------------------------------------------------------------- loading
+function renderAll() {
+  if (!DATA.series[BENCH]) return;
+  const bt = (st.run = backtest(st.years));
+  renderHero(bt);
+  renderChart(bt);
+  fillYearSelect(bt);
+  renderMix(bt);
+  renderYears(bt);
+  $("yearsSection").hidden = false;
+}
+
+// ---------------------------------------------------------------- loading and wiring
 
 async function start() {
   const syms = [...new Set(YEARS.flatMap(picksFor).concat(BENCH))];
   await loadAll(
     syms,
-    (d, n) => ($("progress").textContent = d < n ? `Loading price history: ${d} of ${n}` : ""),
-    (secs, d, n) => ($("progress").innerHTML =
-      `Loaded ${d} of ${n}. The free data plans allow only so many requests a minute, so loading continues in ${secs}s. ` +
-      `<button type="button" class="ghost" id="stopWait">Show results with what's loaded</button>`)
+    (d, n) => setStatus("warn", `Loaded price history for ${d} of ${n}`),
+    (secs, d, n) => setStatus("warn", `Loaded ${d} of ${n}. The free data plans allow only so many requests a minute; continuing in ${secs}s`)
   );
-  $("progress").textContent = "";
   if (!DATA.series[BENCH] || !DATA.series[BENCH].map) {
-    $("msg").innerHTML = `<div class="error">S&amp;P 500 history couldn't be loaded yet. Reload the page in a few minutes.</div>`;
+    setStatus("warn", "S&P 500 history couldn't be loaded");
+    $("heroBody").innerHTML = `<p class="loading">Price history couldn't be loaded yet. Reload the page in a few minutes.</p>`;
     return;
   }
-  const none = syms.filter((s) => !DATA.series[s] || !DATA.series[s].map);
-  $("msg").innerHTML = none.length
-    ? `<div class="warnbox">No price history loaded for ${none.join(", ")}. Years that picked ${none.length === 1 ? "it" : "them"} hold the rest equally${none.some((s) => !DATA.series[s]) ? "; reload in a few minutes to try again" : ""}.</div>`
-    : "";
-  renderMain();
-  renderMonths();
-  $("results").hidden = false;
-  $("months").hidden = false;
+  const none = syms.filter((s) => !DATA.series[s]);
+  if (none.length) setStatus("warn", `Missing price history for ${none.join(", ")}; reload later to retry`);
+  else setStatus("live", `End-of-day prices through ${keyLabel(DATA.series[BENCH].last)}`);
+  renderAll();
 }
 
-$("progress").addEventListener("click", (e) => { if (e.target.id === "stopWait") DATA.stopWaiting = true; });
-$("spanSeg").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
-  st.span = Number(b.dataset.y);
-  $("spanSeg").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
-  if (DATA.series[BENCH]) renderMain();
+document.querySelectorAll(".periods button").forEach((b) => b.addEventListener("click", () => {
+  st.years = Number(b.dataset.years);
+  document.querySelectorAll(".periods button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  renderAll();
+}));
+$("mixYear").addEventListener("change", (e) => { st.mixYear = Number(e.target.value); if (st.run) renderMix(st.run); });
+$("mixSeg").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+  st.mixView = b.dataset.v;
+  $("mixSeg").querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  if (st.run) renderMix(st.run);
 }));
 start();
