@@ -158,7 +158,7 @@ function renderMix(bt) {
     const now = syms.reduce((a, s) => a + (today.w[s] || 0), 0);
     return { sl, syms, w: st.mixView === "target" ? sl.weight : now, target: sl.weight, now };
   });
-  const equity = rows.filter((r) => ["large", "mid", "tech", "intl", "em"].includes(r.sl.id)).reduce((a, r) => a + r.w, 0);
+  const equity = rows.filter((r) => ["large", "mid", "small", "tech", "intl", "em"].includes(r.sl.id)).reduce((a, r) => a + r.w, 0);
 
   $("mixSection").hidden = false;
   $("mixNote").textContent = st.mixView === "target"

@@ -2,9 +2,9 @@
 // Edit this file to change the model. Weights are shares of the whole
 // portfolio and must add up to 1. Inside a sleeve, holdings are equal weight.
 //
-// The US sleeves hold S&P 500 stocks. The S&P 500 has no true small caps, so
-// the mid-cap sleeve uses smaller, faster-growing index members instead of a
-// small/mid-cap fund. International, emerging markets, high-yield and cash
+// The US sleeves hold S&P 500 stocks only. The S&P 500 has no true small caps,
+// so the small-cap sleeve uses the smallest growth companies in the index and
+// the mid-cap sleeve the next tier up. International, emerging markets, high-yield and cash
 // sleeves stay as funds because the S&P 500 doesn't hold them.
 // Index membership was checked by hand; review it once or twice a year.
 //
@@ -21,11 +21,18 @@ const GROWTH_MODEL = [
     ],
   },
   {
-    id: "mid", name: "US Mid-Cap Growth", weight: 0.20, role: "Smaller, faster-growing S&P 500 names", color: "#3E7CB1",
+    id: "mid", name: "US Mid-Cap Growth", weight: 0.10, role: "Mid-sized, faster-growing S&P 500 names", color: "#3E7CB1",
     holdings: [
       ["AXON", "Axon Enterprise"], ["DECK", "Deckers Outdoor"], ["PODD", "Insulet"], ["FICO", "Fair Isaac"],
       ["TYL", "Tyler Technologies"], ["MPWR", "Monolithic Power Systems"], ["CPRT", "Copart"],
       ["ODFL", "Old Dominion Freight Line"],
+    ],
+  },
+  {
+    id: "small", name: "US Small-Cap Growth", weight: 0.10, role: "Smallest growth names in the S&P 500", color: "#8DB4DA",
+    holdings: [
+      ["PAYC", "Paycom Software"], ["EPAM", "EPAM Systems"], ["POOL", "Pool Corporation"],
+      ["ALGN", "Align Technology"], ["SMCI", "Super Micro Computer"],
     ],
   },
   {
