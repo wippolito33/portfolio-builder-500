@@ -27,8 +27,16 @@ const SECTOR_COLORS = {
   "Cash": "#D9E2EC",
   "Other": "#9AA5B1",
 };
+// Market-cap breakpoints for individual U.S. stocks.
+const LARGE_CAP = 10e9;  // $10 billion and up
+const SMALL_CAP = 2e9;   // under $2 billion; mid cap is in between
+const UNKNOWN_SIZE = "US stocks, size unknown";
 const ASSET_COLORS = {
-  "U.S. stocks": "#102A43",
+  "US Large Cap": "#102A43",
+  "US Mid Cap": "#3E7CB1",
+  "US Small Cap": "#8DB4DA",
+  [UNKNOWN_SIZE]: "#B8C4D1",
+  "US stock funds": "#5B6F86",
   "International stocks": "#12805C",
   "Bonds": "#B7791F",
   "Cash": "#9AA5B1",
@@ -49,7 +57,7 @@ const FOREIGN = {
 };
 
 const COLORS = { mine: "#B7791F", equal: "#52606D", bench: "#102A43" };
-const state = { holdings: [], source: "", years: 10, a: null };
+const state = { holdings: [], source: "", years: 10, a: null, caps: {}, capsAvailable: true };
 
 function sectorOf(h) {
   const s = sectorFor(h);
@@ -61,9 +69,36 @@ function assetOf(h) {
   if (s === "Cash") return "Cash";
   if (s === "Bond funds") return "Bonds";
   if (s === "International stock funds") return "International stocks";
-  if (s === "U.S. stock funds") return "U.S. stocks";
-  if (s === "Other") return "Other";
-  return h.symbol in FOREIGN ? "International stocks" : "U.S. stocks";
+  if (s === "U.S. stock funds") return "US stock funds";
+  if (h.symbol in FOREIGN) return "International stocks";
+  const c = state.caps[h.symbol];
+  // A ticker missing from sectors.js is sized if a market cap was found
+  // (true small caps usually aren't listed there); otherwise it stays Other.
+  if (s === "Other") return c && c.cap ? sizeOf(c.cap) : "Other";
+  if (!c || !c.cap) return UNKNOWN_SIZE;
+  return sizeOf(c.cap);
+}
+function sizeOf(cap) {
+  return cap >= LARGE_CAP ? "US Large Cap" : cap >= SMALL_CAP ? "US Mid Cap" : "US Small Cap";
+}
+const isUSStock = (h) => !h.isCash && !(h.symbol in FOREIGN) && !/funds$|^Cash$/.test(sectorOf(h)) && (sectorOf(h) !== "Other" || !!(state.caps[h.symbol] && state.caps[h.symbol].cap));
+// Tickers to look up: listed U.S. stocks, plus unlisted tickers that might be stocks.
+const capCandidate = (h) => !h.isCash && !(h.symbol in FOREIGN) && !/funds$|^Cash$/.test(sectorOf(h));
+const capLabel = (v) => !v ? "—" : v >= 1e12 ? "$" + (v / 1e12).toFixed(2) + "T" : v >= 1e9 ? "$" + (v / 1e9).toFixed(1) + "B" : "$" + Math.round(v / 1e6) + "M";
+
+// Market cap for each individual U.S. stock, 20 tickers per request.
+async function loadCaps(list) {
+  const syms = [...new Set(list.filter((h) => h.priced && capCandidate(h)).map((h) => h.symbol))].filter((s) => !(state.caps[s] && state.caps[s].cap));
+  if (!syms.length) return;
+  $("progress").textContent = "Looking up company sizes…";
+  for (let i = 0; i < syms.length; i += 20) {
+    try {
+      const r = await fetch("/api/marketcap?symbols=" + encodeURIComponent(syms.slice(i, i + 20).join(",")));
+      const d = await r.json();
+      if (d && d.caps) { Object.assign(state.caps, d.caps); if (d.available === false) state.capsAvailable = false; }
+    } catch { /* those stocks show as size unknown */ }
+  }
+  $("progress").textContent = "";
 }
 const isFund = (h) => /funds$/.test(sectorOf(h));
 const isStock = (h) => !h.isCash && !isFund(h) && sectorOf(h) !== "Other";
@@ -160,7 +195,7 @@ function flagsFor(a) {
   if (heavy.length) out.push(["warn", `${heavy.map((s) => `${s.key} is ${pct(s.w, 0, false)}`).join(", ")} of the portfolio through individual stocks.`]);
   else if (a.stockSectors.length) out.push(["ok", `No single sector is more than ${pct(SECTOR_LIMIT, 0, false)} through individual stocks.`]);
   const intl = (a.assets.find((x) => x.key === "International stocks") || { w: 0 }).w;
-  const equity = a.assets.filter((x) => /stocks$/.test(x.key)).reduce((s, x) => s + x.w, 0);
+  const equity = a.assets.filter((x) => /^US |stocks/.test(x.key)).reduce((s, x) => s + x.w, 0);
   if (equity > 0.2 && intl === 0) out.push(["warn", "There's no international stock exposure; everything in stocks is U.S.-based."]);
   const bonds = (a.assets.find((x) => x.key === "Bonds") || { w: 0 }).w;
   const cash = (a.assets.find((x) => x.key === "Cash") || { w: 0 }).w;
@@ -365,16 +400,23 @@ function renderMix(a) {
   donut("sectorPie", a.sectors, sc);
   legendTable("assetTable", a.assets, ac);
   legendTable("sectorTable", a.sectors, sc);
+  const unknown = a.hs.filter((h) => assetOf(h) === UNKNOWN_SIZE).map((h) => h.symbol);
+  $("capNote").textContent = !unknown.length
+    ? `U.S. stocks are sized by market cap: large $10B and up, mid $2B to $10B, small under $2B.`
+    : unknown.length === a.hs.filter((h) => isUSStock(h)).length && !state.capsAvailable
+      ? `Market-cap data isn't available from the site's data plans right now, so U.S. stocks are shown as "${UNKNOWN_SIZE}" instead of large, mid and small cap.`
+      : `Market cap wasn't available for ${unknown.join(", ")}, so ${unknown.length === 1 ? "it is" : "they are"} shown as "${UNKNOWN_SIZE}". Other U.S. stocks are sized by market cap: large $10B and up, mid $2B to $10B, small under $2B.`;
 }
 
 function renderTable(a) {
   $("holdNote").textContent = `${a.hs.length} holdings, ${usd(a.total)}`;
   $("holdTable").innerHTML = `
-    <thead><tr><th>Holding</th><th>Asset class</th><th>Sector</th><th class="num">Value</th><th class="num">Weight</th></tr></thead>
+    <thead><tr><th>Holding</th><th>Asset class</th><th>Sector</th><th class="num">Market cap</th><th class="num">Value</th><th class="num">Weight</th></tr></thead>
     <tbody>${a.hs.map((h) => `<tr>
       <td><span class="tick">${esc(h.isCash ? "Cash" : h.symbol)}</span>${h.name && !h.isCash ? `<span class="name">${esc(h.name)}</span>` : ""}</td>
       <td>${esc(assetOf(h))}</td>
       <td>${esc(sectorOf(h))}</td>
+      <td class="num">${isUSStock(h) ? capLabel(state.caps[h.symbol] && state.caps[h.symbol].cap) : ""}</td>
       <td class="num">${usd(h.value)}</td>
       <td class="num ${isStock(h) && h.w > SINGLE_LIMIT ? "down" : ""}">${pct(h.w, 1, false)}</td>
     </tr>`).join("")}</tbody>`;
@@ -394,6 +436,7 @@ async function run(list, source) {
     $("loadMsg").innerHTML += `<div class="warnbox">None of these holdings could be valued, so there's nothing to show yet.</div>`;
     return;
   }
+  await loadCaps(list);
   const a = (state.a = analyze(list));
   const hasBench = DATA.series[BENCH] && DATA.series[BENCH].map;
   $("results").hidden = !hasBench;
