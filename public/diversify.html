@@ -166,6 +166,9 @@
   .stats .lbl { font: 500 0.9375rem var(--sans); margin: 0 0 6px; }
   .stats .big { font: 400 2rem/1.1 var(--serif); }
   .stats .hint { font-size: 0.8125rem; color: var(--slate); margin-top: 4px; }
+  .check-head { font: 400 1.75rem/1.2 var(--serif); margin: 0 0 8px; max-width: 34ch; }
+  .check-head .amt { color: var(--brass); }
+  #checkBody { margin-bottom: 32px; }
   ul.flags { list-style: none; padding: 0; margin: 0 0 24px; display: grid; gap: 8px; max-width: 80ch; }
   ul.flags li { display: grid; grid-template-columns: 10px 1fr; gap: 10px; align-items: baseline; font-size: 0.9375rem; }
   ul.flags li::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--gain); transform: translateY(-1px); }
@@ -233,20 +236,20 @@
   </section>
 
   <section class="hero" id="results" hidden aria-live="polite">
+    <div class="periods" role="group" aria-label="Backtest period" id="periods">
+      <button type="button" data-years="1" aria-pressed="false">1 yr</button>
+      <button type="button" data-years="3" aria-pressed="false">3 yrs</button>
+      <button type="button" data-years="5" aria-pressed="false">5 yrs</button>
+      <button type="button" data-years="10" aria-pressed="true">10 yrs</button>
+      <button type="button" data-years="20" aria-pressed="false">20 yrs</button>
+    </div>
     <div id="heroBody"></div>
-    <div class="section-head" style="margin-top:8px">
-      <h2>Largest holdings</h2>
-      <span class="note" id="barNote"></span>
-    </div>
-    <div class="bar-box" id="barBox"><canvas id="barChart" aria-label="Largest holdings by share of the portfolio"></canvas></div>
-    <div class="chart-legend">
-      <span><span class="sw" style="background:#102A43"></span>Individual stock</span>
-      <span><span class="sw" style="background:#B7791F"></span>Individual stock over 10%</span>
-      <span><span class="sw" style="background:#9AA5B1"></span>Fund or cash</span>
-    </div>
+    <div class="chart-box"><canvas id="chart" aria-label="Growth of $10,000, this portfolio versus the S&amp;P 500"></canvas></div>
+    <div id="msg"></div>
   </section>
 
   <section class="mix" id="mixSection" hidden>
+    <div id="checkBody"></div>
     <div class="section-head">
       <h2>Allocation</h2>
       <span class="note">Share of total portfolio value</span>
@@ -276,8 +279,22 @@
     </div>
   </section>
 
+  <section class="holdings" id="barSection" hidden>
+    <div class="section-head">
+      <h2>Largest holdings</h2>
+      <span class="note" id="barNote"></span>
+    </div>
+    <div class="bar-box" id="barBox"><canvas id="barChart" aria-label="Largest holdings by share of the portfolio"></canvas></div>
+    <div class="chart-legend">
+      <span><span class="sw" style="background:#102A43"></span>Individual stock</span>
+      <span><span class="sw" style="background:#B7791F"></span>Individual stock over 10%</span>
+      <span><span class="sw" style="background:#9AA5B1"></span>Fund or cash</span>
+    </div>
+  </section>
+
   <footer>
     <div>
+    <p>The growth chart is a hypothetical backtest of today's holdings at today's weights, rebalanced monthly, with dividends reinvested and no taxes, fees or trading costs. It shows how this mix would have done, not how the account actually did; holdings without price history for part of the period are left out of those months and the rest are reweighted. Past performance does not guarantee future results.</p>
     <p>For educational and discussion purposes only. This page measures how a portfolio is spread out; it does not measure risk, expected return or suitability, and it is not a recommendation to buy or sell any security. Sector and asset-class groupings are approximate, and funds are not broken down into their underlying holdings. The concentration levels flagged here are general rules of thumb, not limits that apply to every investor. Investing involves risk, including possible loss of principal.</p>
     <p>Market data from Tiingo and Twelve Data, may be delayed. Not investment advice. Review with compliance before sharing any output with clients or prospects.</p>
     </div>

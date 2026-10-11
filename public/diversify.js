@@ -1,8 +1,8 @@
 // Am I Diversified? Load holdings (positions file, typed in, or a saved
 // portfolio) and show how the money is spread across positions, asset
 // classes and sectors. Runs in the browser; files are never uploaded. Only
-// ticker symbols are sent to /api/quotes (and /api/history as a fallback) to
-// value holdings entered as shares.
+// ticker symbols are sent to /api/quotes and /api/history, to value holdings
+// entered as shares and to backtest the mix against the S&P 500.
 
 const SINGLE_LIMIT = 0.10;  // an individual stock above this is flagged
 const TOP5_LIMIT = 0.50;
@@ -48,7 +48,8 @@ const FOREIGN = {
   BHP: "Materials", RIO: "Materials", INFY: "Information Technology",
 };
 
-const state = { holdings: [], source: "" };
+const COLORS = { mine: "#B7791F", equal: "#52606D", bench: "#102A43" };
+const state = { holdings: [], source: "", years: 10, a: null };
 
 function sectorOf(h) {
   const s = sectorFor(h);
@@ -86,32 +87,32 @@ async function fetchQuotes(symbols) {
   return out;
 }
 
-// Holdings entered as shares need a price. Latest quotes first (one request
-// per 40 tickers); anything still missing uses the last month-end price.
+// Holdings entered as shares need a price: latest quotes first (one request
+// per 40 tickers). Then monthly price history is loaded for every holding and
+// SPY for the backtest; anything still unpriced uses its last month-end price.
 async function valueHoldings(list) {
   const need = [...new Set(list.filter((h) => h.value == null && h.shares != null && !h.isCash).map((h) => h.symbol))];
   const price = {};
-  let asOf = null;
   if (need.length) {
     $("progress").textContent = `Getting prices for ${need.length} ${need.length === 1 ? "holding" : "holdings"}…`;
     const q = await fetchQuotes(need);
     for (const s of need) if (q[s] && q[s].price) price[s] = q[s].price;
-    const rest = need.filter((s) => price[s] == null);
-    if (rest.length) {
-      const loaded = await loadAll(
-        rest,
-        (d, n) => ($("progress").textContent = `Getting prices: ${d} of ${n} from price history`),
-        (secs, d, n) => ($("progress").innerHTML = `Got ${d} of ${n}. The free data plans allow only so many requests a minute; continuing in ${secs}s. <button type="button" class="ghost" id="stopWait">Use what's loaded</button>`)
-      );
-      for (const s of rest) if (loaded[s] && loaded[s].map) { price[s] = loaded[s].lastPrice; asOf = loaded[s].last; }
-    }
   }
+  const syms = [...new Set(list.filter((h) => !h.isCash).map((h) => h.symbol).concat(BENCH))];
+  $("progress").textContent = `Loading price history: 0 of ${syms.length}`;
+  const loaded = await loadAll(
+    syms,
+    (d, n) => ($("progress").textContent = `Loading price history: ${d} of ${n}`),
+    (secs, d, n) => ($("progress").innerHTML = `Loaded ${d} of ${n}. The free data plans allow only so many requests a minute; continuing in ${secs}s. <button type="button" class="ghost" id="stopWait">Use what's loaded</button>`)
+  );
+  for (const s of need) if (price[s] == null && loaded[s] && loaded[s].map) price[s] = loaded[s].lastPrice;
   for (const h of list) {
     if (h.value == null && h.shares != null && price[h.symbol] != null) h.value = h.shares * price[h.symbol];
     h.priced = h.value != null && h.value > 0;
   }
   $("progress").textContent = "";
-  return { missing: list.filter((h) => !h.priced && !h.isCash).map((h) => h.symbol), historyAsOf: asOf };
+  const limited = list.filter((h) => !h.isCash && loaded[h.symbol] && loaded[h.symbol].rateLimited).map((h) => h.symbol);
+  return { missing: list.filter((h) => !h.priced && !h.isCash).map((h) => h.symbol), limited };
 }
 
 // ---------------------------------------------------------------- analysis
@@ -170,7 +171,85 @@ function flagsFor(a) {
 
 // ---------------------------------------------------------------- render
 
-function renderHero(a) {
+// ---------------------------------------------------------------- growth of $10,000
+
+// Today's holdings at today's dollar weights, rebalanced monthly (the same
+// engine as the Analyze and Compare tabs), against SPY and against the same
+// holdings at equal weight.
+function backtest(a, years) {
+  const bench = DATA.series[BENCH];
+  const endK = bench.last;
+  const startK = Math.max(endK - years * 12, bench.first);
+  const mine = weightedReturns(a.hs, startK, endK);
+  const equal = weightedReturns(a.hs.map((h) => ({ ...h, value: 1 })), startK, endK);
+  const benchRets = [], labels = [keyLabel(startK)];
+  for (let k = startK + 1; k <= endK; k++) { benchRets.push(ret(bench, k) ?? 0); labels.push(keyLabel(k)); }
+  const late = a.hs.filter((h) => !h.isCash && !(DATA.series[h.symbol] && DATA.series[h.symbol].first <= startK));
+  return {
+    years, startK, endK, labels, coverage: mine.coverage, late,
+    mine: stats(mine.rets), equal: stats(equal.rets), bench: stats(benchRets),
+  };
+}
+
+function renderGrowth(a) {
+  const bt = backtest(a, state.years);
+  const card = (title, color, x, dash) => `
+    <div>
+      <h3><span class="swatch" style="background:${color}${dash ? ";opacity:.75" : ""}"></span>${esc(title)}</h3>
+      <div class="big">${usd(x.end)}</div>
+      <dl>
+        <dt>Total return</dt><dd class="${cls(x.total)}">${pct(x.total)}</dd>
+        <dt>Annualized</dt><dd class="${cls(x.cagr)}">${pct(x.cagr, 2)}</dd>
+        <dt>Worst drop</dt><dd class="down">${pct(x.mdd)}</dd>
+      </dl>
+    </div>`;
+  const yrs = Math.round((bt.endK - bt.startK) / 12);
+  $("heroBody").innerHTML = `
+    <h2 class="headline">$10,000 invested ${yrs === 1 ? "a year" : yrs + " years"} ago in this mix is worth <span class="amt">${usd(bt.mine.end)}</span> today</h2>
+    <p class="sub">${esc(state.source)}. Started ${keyLabel(bt.startK)} with today's ${a.hs.length} holdings at today's weights, rebalanced monthly. Dividends reinvested.</p>
+    <div class="compare">
+      ${card("Your portfolio", COLORS.mine, bt.mine)}
+      ${card(`Same ${a.hs.length} holdings, equal weight`, COLORS.equal, bt.equal, true)}
+      ${card("S&P 500 (SPY)", COLORS.bench, bt.bench)}
+    </div>`;
+
+  const ds = (label, data, color, width, dash) => ({
+    label, data, borderColor: color, backgroundColor: color, borderWidth: width, borderDash: dash || [],
+    pointRadius: 0, pointHoverRadius: 4, tension: 0.15,
+  });
+  if (CHARTS.chart) CHARTS.chart.destroy();
+  CHARTS.chart = new Chart($("chart"), {
+    type: "line",
+    data: {
+      labels: bt.labels,
+      datasets: [
+        ds("Your portfolio", bt.mine.path, COLORS.mine, 2.5),
+        ds(`Same ${a.hs.length}, equal weight`, bt.equal.path, COLORS.equal, 1.5, [5, 4]),
+        ds("S&P 500 (SPY)", bt.bench.path, COLORS.bench, 1.5),
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "bottom", align: "start", labels: { boxWidth: 14, boxHeight: 3, font: { family: "Instrument Sans" }, color: "#52606D" } },
+        tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${usd(c.parsed.y)}` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, color: "#52606D", font: { family: "Instrument Sans" } } },
+        y: { grid: { color: "#E6EBF0" }, ticks: { color: "#52606D", font: { family: "Instrument Sans" }, callback: (v) => usd(v) } },
+      },
+    },
+  });
+  const notes = [];
+  if (yrs < state.years) notes.push(`S&P 500 history on the site only goes back to ${keyLabel(bt.startK)}.`);
+  if (bt.late.length) notes.push(`${bt.late.map((h) => h.symbol).join(", ")} ${bt.late.length === 1 ? "has" : "have"} no price history back to ${keyLabel(bt.startK)}, so ${bt.late.length === 1 ? "it is" : "they are"} left out until ${bt.late.length === 1 ? "it starts" : "they start"} trading and the rest are reweighted (${pct(bt.coverage, 0, false)} of today's value is covered from the start).`);
+  $("msg").innerHTML = notes.length ? `<p class="note" style="margin-top:4px">${esc(notes.join(" "))}</p>` : "";
+}
+
+// ---------------------------------------------------------------- diversification check
+
+function renderCheck(a) {
   const top = a.hs[0];
   const flags = flagsFor(a);
   const warns = flags.filter((f) => f[0] === "warn").length;
@@ -179,9 +258,9 @@ function renderHero(a) {
     : warns === 1
       ? `Mostly spread out, with <span class="amt">one area</span> to look at`
       : `There are <span class="amt">${warns} areas</span> where your money is concentrated`;
-  $("heroBody").innerHTML = `
-    <h2 class="headline">${headline}</h2>
-    <p class="sub">${esc(state.source)}. Total value ${usd(a.total)}.</p>
+  $("checkBody").innerHTML = `
+    <h2 class="check-head">${headline}</h2>
+    <p class="sub" style="margin-bottom:16px">Total value ${usd(a.total)}.</p>
     <ul class="flags">${flags.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join("")}</ul>
     <div class="stats">
       <div><div class="lbl">Holdings</div><div class="big">${a.hs.length}</div><div class="hint">${a.stocks.length} individual ${a.stocks.length === 1 ? "stock" : "stocks"}</div></div>
@@ -307,21 +386,25 @@ async function run(list, source) {
   state.holdings = list;
   state.source = source;
   $("loadMsg").innerHTML = "";
-  const { missing } = await valueHoldings(list);
-  if (missing.length) $("loadMsg").innerHTML = `<div class="warnbox">No price found for ${missing.map(esc).join(", ")}, so ${missing.length === 1 ? "it is" : "they are"} left out. Check the ticker, or reload in a few minutes if the data plans' limits were reached.</div>`;
+  const { missing, limited } = await valueHoldings(list);
+  if (missing.length) $("loadMsg").innerHTML = `<div class="warnbox">No price found for ${missing.map(esc).join(", ")}, so ${missing.length === 1 ? "it is" : "they are"} left out. ${missing.some((m) => limited.includes(m)) ? "The free data plans' limits were reached; reload in a few minutes." : "Check the ticker."}</div>`;
   const other = list.filter((h) => h.priced && sectorOf(h) === "Other").map((h) => h.symbol);
   if (other.length) $("loadMsg").innerHTML += `<div class="warnbox">${other.map(esc).join(", ")} ${other.length === 1 ? "isn't" : "aren't"} in the sector list yet, so ${other.length === 1 ? "it shows" : "they show"} as Other. Add ${other.length === 1 ? "it" : "them"} to sectors.js.</div>`;
   if (!list.some((h) => h.priced)) {
     $("loadMsg").innerHTML += `<div class="warnbox">None of these holdings could be valued, so there's nothing to show yet.</div>`;
     return;
   }
-  const a = analyze(list);
-  ["results", "mixSection", "holdSection"].forEach((id) => ($(id).hidden = false));
-  renderHero(a);
-  renderBars(a);
+  const a = (state.a = analyze(list));
+  const hasBench = DATA.series[BENCH] && DATA.series[BENCH].map;
+  $("results").hidden = !hasBench;
+  ["mixSection", "holdSection", "barSection"].forEach((id) => ($(id).hidden = false));
+  if (hasBench) renderGrowth(a);
+  else $("loadMsg").innerHTML += `<div class="warnbox">S&amp;P 500 history couldn't be loaded, so the growth chart is hidden. Reload in a few minutes.</div>`;
+  renderCheck(a);
   renderMix(a);
   renderTable(a);
-  $("results").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  renderBars(a);
+  $(hasBench ? "results" : "mixSection").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
 }
 
 function showError(e) { $("loadMsg").innerHTML = `<div class="warnbox">${esc(e.message || e)}</div>`; }
@@ -369,6 +452,11 @@ $("savedSel").addEventListener("change", (e) => {
   const p = readSaved().find((x) => x.id === e.target.value);
   if (p) run(fromSaved(p), p.name);
 });
+document.querySelectorAll("#periods button").forEach((b) => b.addEventListener("click", () => {
+  state.years = Number(b.dataset.years);
+  document.querySelectorAll("#periods button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  if (state.a && DATA.series[BENCH]) renderGrowth(state.a);
+}));
 $("progress").addEventListener("click", (e) => { if (e.target.id === "stopWait") DATA.stopWaiting = true; });
 fillSaved();
 
