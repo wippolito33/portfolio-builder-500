@@ -69,3 +69,10 @@ The free plan allows 50 requests an hour and 1,000 a day. To stay well under tha
 - Backtests $10,000 over 1, 3, 5, 10 or 20 years, rebalanced to target every January, against SPY and against the same start never rebalanced. Includes the allocation donut (target or today's drifted weights, flagging sleeves more than 5 points off target), a holdings table, and a year-by-year table.
 - Latest prices come from `/api/quotes` (`netlify/functions/quotes.mjs`): one Tiingo request for all 27 holdings, cached for 15 minutes.
 - The holdings were picked today, so the backtest benefits from hindsight. The page footer says so.
+
+## Am I Diversified? (`/diversify.html`)
+- Client-facing check of how a portfolio is spread out. Load holdings the same ways as the Analyze tab: a positions CSV (RBC and other custodian exports), typed-in holdings, a portfolio file exported from this site, or a saved portfolio. Files are read in the browser and never uploaded. If a portfolio was just loaded on the Analyze tab, it opens automatically.
+- Shows a largest-holdings bar chart (individual stocks over 10% highlighted, with a 10% line), donuts by asset class and by sector, summary figures (largest holding, top 5, "acts like N equal-size holdings" = 1 / sum of squared weights) and plain-language flags.
+- Flag thresholds are at the top of `public/diversify.js`: single stock over 10%, top five over 50%, a sector over 30% through individual stocks, no international stock, more than 20% cash, no bonds and under 5% cash.
+- Asset class and sector come from `public/sectors.js`; foreign companies listed in the U.S. (TSM, ASML, NVO, etc.) are in the `FOREIGN` list in `diversify.js` and count as international. Funds aren't broken into their holdings.
+- Holdings entered as shares are priced with `/api/quotes` (one Tiingo request per 40 tickers), falling back to the last saved month-end price.

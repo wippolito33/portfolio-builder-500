@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Am I Diversified? · Portfolio Builder 500</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Instrument+Serif&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #F6F8F7;
+    --surface: #FFFFFF;
+    --ink: #102A43;
+    --slate: #52606D;
+    --rule: #D9E2EC;
+    --brass: #B7791F;
+    --gain: #12805C;
+    --loss: #C2362B;
+    --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+    --sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 400 16px/1.5 var(--sans);
+    font-variant-numeric: tabular-nums;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  header.top { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 28px 0 8px; flex-wrap: wrap; }
+  .brand { font: 400 2.25rem/1 var(--serif); margin: 0; letter-spacing: -0.01em; }
+  .firm { color: var(--slate); font-size: 0.875rem; margin-top: 6px; }
+  .status { font-size: 0.875rem; color: var(--slate); display: flex; align-items: center; gap: 8px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rule); }
+  .dot.live { background: var(--gain); box-shadow: 0 0 0 4px rgba(18,128,92,.15); }
+  .dot.warn { background: var(--brass); }
+  button.ghost { font: 500 0.875rem var(--sans); color: var(--ink); background: none; border: 1px solid var(--rule); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  button.ghost:hover { border-color: var(--ink); }
+
+  /* Hero: the backtest headline */
+  .hero { padding: 40px 0 8px; border-bottom: 1px solid var(--rule); }
+  .periods { display: inline-flex; border: 1px solid var(--ink); border-radius: 999px; overflow: hidden; margin-bottom: 28px; }
+  .periods button { font: 500 0.9375rem var(--sans); background: none; color: var(--ink); border: 0; padding: 8px 16px; cursor: pointer; }
+  .periods button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+  .headline { font: 400 clamp(2rem, 4.6vw, 3.5rem)/1.08 var(--serif); margin: 0 0 12px; max-width: 22ch; letter-spacing: -0.015em; }
+  .headline .amt { color: var(--brass); }
+  .sub { color: var(--slate); max-width: 64ch; margin: 0 0 28px; }
+
+  .compare { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--rule); }
+  .compare > div { padding: 18px 20px 20px 0; }
+  .compare > div + div { padding-left: 20px; border-left: 1px solid var(--rule); }
+  .compare h3 { font: 500 0.9375rem var(--sans); margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+  .swatch { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .compare .big { font: 400 2rem/1.1 var(--serif); }
+  .compare dl { display: grid; grid-template-columns: auto auto; justify-content: start; gap: 2px 14px; margin: 8px 0 0; font-size: 0.875rem; color: var(--slate); }
+  .compare dd { margin: 0; color: var(--ink); }
+
+  .chart-box { position: relative; height: 360px; margin: 8px 0 32px; }
+
+  /* Holdings */
+  section.holdings { padding: 36px 0 24px; }
+  .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+  h2 { font: 400 1.75rem/1.2 var(--serif); margin: 0; }
+  .note { font-size: 0.875rem; color: var(--slate); }
+  .table-scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; min-width: 760px; }
+  th { text-align: left; font-weight: 500; color: var(--slate); font-size: 0.8125rem; padding: 10px 14px; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  th.num, td.num { text-align: right; }
+  tr.sector-start td { border-top: 1px solid var(--rule); }
+  td.sector { color: var(--slate); font-size: 0.875rem; width: 190px; }
+  .tick { font-weight: 600; }
+  .name { color: var(--slate); font-size: 0.8125rem; display: block; max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .up { color: var(--gain); }
+  .down { color: var(--loss); }
+  .tag { font-size: 0.8125rem; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .tag.held { background: #E6F2EE; color: var(--gain); }
+  .tag.dropped { background: #FBE9E7; color: var(--loss); }
+  .tag.na { background: #EEF1F4; color: var(--slate); }
+  tr.is-dropped td:not(.sector) { opacity: .7; }
+
+  .error { background: #FBE9E7; color: var(--loss); border-radius: 8px; padding: 12px 16px; margin: 16px 0; }
+  .loading { color: var(--slate); padding: 40px 0; }
+
+  section.mix { padding: 36px 0 8px; border-bottom: 1px solid var(--rule); }
+  .seg { display: inline-flex; border: 1px solid var(--ink); border-radius: 999px; overflow: hidden; }
+  .seg button { font: 500 0.875rem var(--sans); background: none; color: var(--ink); border: 0; padding: 6px 14px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+  .mix-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin: 8px 0 24px; }
+  .pie-box { position: relative; height: 400px; }
+  .mix-table { max-width: 720px; }
+  .mix-table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; min-width: 0; background: none; }
+  .mix-table td { padding: 6px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  .mix-table tr:last-child td { border-bottom: 0; }
+  .mix-table .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; vertical-align: -1px; margin-right: 8px; }
+  .mix-table .tk { color: var(--slate); font-size: 0.8125rem; }
+  .picks td, .picks th { text-align: center; white-space: nowrap; }
+  .picks td:first-child, .picks th:first-child { text-align: left; }
+  .picks .new { color: var(--brass); font-weight: 600; }
+  .year-tables h3 { font: 600 1rem/1.3 var(--sans); margin: 28px 0 8px; }
+  .msg { background: #FBEFD9; color: #6B4510; border-radius: 8px; padding: 12px 16px; margin: 16px 0 0; font-size: 0.9375rem; }
+  select.year { font: 500 0.875rem var(--sans); color: var(--ink); border: 1px solid var(--ink); border-radius: 999px; padding: 6px 12px; background: var(--surface); }
+  .mix-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  footer { border-top: 1px solid var(--rule); padding: 20px 0 40px; font-size: 0.8125rem; color: var(--slate); }
+  footer p { max-width: 90ch; margin: 0 0 8px; }
+  footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 32px; align-items: end; }
+  .contact { display: flex; gap: 16px; align-items: center; font-size: 0.875rem; color: var(--slate); font-style: normal; line-height: 1.45; }
+  .contact img { width: 104px; height: 104px; border-radius: 8px; object-fit: cover; flex: none; box-shadow: 0 0 0 1px var(--rule); }
+  .contact .who { font: 400 1.25rem/1.2 var(--serif); color: var(--ink); }
+  .contact a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--rule); }
+  .contact a:hover { border-bottom-color: var(--ink); }
+  @media (max-width: 720px) { footer { grid-template-columns: 1fr; } }
+
+  nav.pages { display: flex; gap: 24px; border-bottom: 1px solid var(--rule); margin-top: 12px; overflow-x: auto; scrollbar-width: none; }
+  nav.pages a { white-space: nowrap; }
+  nav.pages a { color: var(--slate); text-decoration: none; font-weight: 500; font-size: 0.9375rem; padding: 10px 0; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  nav.pages a:hover { color: var(--ink); }
+  nav.pages a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--ink); }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+  @media (max-width: 720px) {
+    .compare { grid-template-columns: 1fr; }
+    .compare > div + div { border-left: 0; padding-left: 0; border-top: 1px solid var(--rule); }
+    .chart-box { height: 280px; }
+    .mix-grid { grid-template-columns: minmax(0, 1fr); }
+    .pie-box { height: 280px; }
+    td.sector { width: auto; }
+  }
+
+  .mix-table td.num { text-align: right; white-space: nowrap; }
+  .mix-table .role { color: var(--slate); font-size: 0.8125rem; }
+  .mix-table tr.sub td { color: var(--slate); font-size: 0.875rem; border-bottom: 0; }
+  .mix-grid.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; }
+  .holdings-table td.sleeve { color: var(--slate); font-size: 0.875rem; width: 200px; }
+  .holdings-table .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; margin-right: 8px; vertical-align: 0; }
+  ul.rules { margin: 0; padding-left: 20px; max-width: 72ch; display: grid; gap: 6px; }
+  section.notes { padding: 32px 0 28px; }
+  @media (max-width: 900px) { .mix-grid.two { grid-template-columns: minmax(0, 1fr); } }
+
+  /* Am I Diversified? */
+  section.load { padding: 36px 0 32px; border-bottom: 1px solid var(--rule); }
+  .lede { color: var(--slate); margin: 0 0 20px; max-width: 70ch; }
+  .load-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 20px; min-width: 0; }
+  .panel h3 { font: 600 1rem/1.3 var(--sans); margin: 0 0 10px; }
+  .drop { border: 1.5px dashed var(--rule); border-radius: 8px; padding: 28px 16px; text-align: center; color: var(--slate); cursor: pointer; }
+  .drop.over, .drop:hover { border-color: var(--ink); color: var(--ink); }
+  .drop strong { color: var(--ink); }
+  textarea { width: 100%; min-height: 132px; font: 400 0.9375rem/1.5 var(--sans); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; color: var(--ink); resize: vertical; }
+  label.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.875rem; color: var(--slate); }
+  select.saved { font: 400 0.9375rem var(--sans); color: var(--ink); border: 1px solid var(--rule); border-radius: 8px; padding: 8px 10px; background: var(--surface); max-width: 100%; }
+  button.primary { font: 600 0.9375rem var(--sans); background: var(--ink); color: var(--paper); border: 0; border-radius: 8px; padding: 10px 18px; cursor: pointer; }
+  .saved-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 16px; font-size: 0.875rem; color: var(--slate); }
+  .warnbox { background: #FBEFD9; color: #6B4510; border-radius: 8px; padding: 12px 16px; margin: 12px 0 0; font-size: 0.9375rem; }
+  .progress { color: var(--slate); font-size: 0.9375rem; margin: 12px 0 0; }
+  textarea:focus-visible, select:focus-visible, .drop:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--rule); }
+  .stats > div { padding: 18px 20px 20px 0; }
+  .stats > div + div { padding-left: 20px; border-left: 1px solid var(--rule); }
+  .stats .lbl { font: 500 0.9375rem var(--sans); margin: 0 0 6px; }
+  .stats .big { font: 400 2rem/1.1 var(--serif); }
+  .stats .hint { font-size: 0.8125rem; color: var(--slate); margin-top: 4px; }
+  ul.flags { list-style: none; padding: 0; margin: 0 0 24px; display: grid; gap: 8px; max-width: 80ch; }
+  ul.flags li { display: grid; grid-template-columns: 10px 1fr; gap: 10px; align-items: baseline; font-size: 0.9375rem; }
+  ul.flags li::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--gain); transform: translateY(-1px); }
+  ul.flags li.warn::before { background: var(--brass); }
+  .bar-box { position: relative; margin: 8px 0 12px; }
+  .chart-legend { display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.8125rem; color: var(--slate); margin-bottom: 28px; }
+  .chart-legend .sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; vertical-align: -1px; margin-right: 6px; }
+  .donuts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; margin: 8px 0 24px; }
+  .donuts h3 { font: 600 1rem/1.3 var(--sans); margin: 0 0 8px; }
+  .donuts .pie-box { height: 300px; margin-bottom: 12px; }
+  .mix-table td.num { text-align: right; white-space: nowrap; }
+  #holdTable { min-width: 680px; }
+  @media (max-width: 900px) {
+    .load-grid, .donuts { grid-template-columns: minmax(0, 1fr); }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .stats > div:nth-child(3) { padding-left: 0; border-left: 0; }
+    .stats > div:nth-child(n+3) { border-top: 1px solid var(--rule); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1 class="brand">Portfolio Builder 500</h1>
+      <div class="firm">Bill Ippolito, Alexander Capital, L.P.</div>
+    </div>
+  </header>
+  <nav class="pages" aria-label="Pages">
+    <a href="/">Sector portfolio</a>
+    <a href="/analyze.html">Analyze a portfolio</a>
+    <a href="/compare.html">Compare</a>
+    <a href="/annual.html">Annual Sector Select</a>
+    <a href="/growth.html">Aggressive Growth Model</a>
+    <a href="/diversify.html" aria-current="page">Am I Diversified?</a>
+  </nav>
+
+  <section class="load" id="load">
+    <h2 class="headline" style="margin-bottom:12px">Am I diversified?</h2>
+    <p class="lede">Add your holdings to see how your money is spread across individual positions, asset classes and sectors. Files are read in your browser and never uploaded to a server.</p>
+    <div class="load-grid">
+      <div class="panel">
+        <h3>Import a positions file</h3>
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choose a positions file">
+          <strong>Choose a positions file</strong> or drag it here<br />
+          <span class="note">Works with RBC exports, any CSV with Symbol and Quantity columns, and portfolio files exported from this site</span>
+        </div>
+        <input type="file" id="file" accept=".csv,text/csv,.json,application/json" hidden />
+        <p class="note" id="fileName"></p>
+      </div>
+      <div class="panel">
+        <h3>Enter holdings</h3>
+        <label class="field" for="manual">One holding per line: ticker and number of shares. Use CASH and a dollar amount for cash.
+          <textarea id="manual" placeholder="AAPL, 600&#10;MSFT, 40&#10;VEA, 300&#10;CASH, 10000"></textarea>
+        </label>
+        <p style="margin:12px 0 0"><button class="primary" id="manualBtn" type="button">Check diversification</button></p>
+      </div>
+    </div>
+    <div class="saved-row" id="savedRow" hidden>
+      <label for="savedSel">Or open a saved portfolio</label>
+      <select class="saved" id="savedSel"></select>
+    </div>
+    <div class="progress" id="progress" role="status"></div>
+    <div id="loadMsg"></div>
+  </section>
+
+  <section class="hero" id="results" hidden aria-live="polite">
+    <div id="heroBody"></div>
+    <div class="section-head" style="margin-top:8px">
+      <h2>Largest holdings</h2>
+      <span class="note" id="barNote"></span>
+    </div>
+    <div class="bar-box" id="barBox"><canvas id="barChart" aria-label="Largest holdings by share of the portfolio"></canvas></div>
+    <div class="chart-legend">
+      <span><span class="sw" style="background:#102A43"></span>Individual stock</span>
+      <span><span class="sw" style="background:#B7791F"></span>Individual stock over 10%</span>
+      <span><span class="sw" style="background:#9AA5B1"></span>Fund or cash</span>
+    </div>
+  </section>
+
+  <section class="mix" id="mixSection" hidden>
+    <div class="section-head">
+      <h2>Allocation</h2>
+      <span class="note">Share of total portfolio value</span>
+    </div>
+    <div class="donuts">
+      <div>
+        <h3>By asset class</h3>
+        <div class="pie-box"><canvas id="assetPie" aria-label="Portfolio by asset class"></canvas></div>
+        <table class="mix-table" id="assetTable"></table>
+      </div>
+      <div>
+        <h3>By sector</h3>
+        <div class="pie-box"><canvas id="sectorPie" aria-label="Portfolio by sector"></canvas></div>
+        <table class="mix-table" id="sectorTable"></table>
+      </div>
+    </div>
+    <p class="note" style="max-width:80ch">Individual stocks use their GICS sector. Funds are shown by what they hold broadly (U.S. stock, international stock or bond funds) because their own sector mix isn't broken out here.</p>
+  </section>
+
+  <section class="holdings" id="holdSection" hidden>
+    <div class="section-head">
+      <h2>All holdings</h2>
+      <span class="note" id="holdNote"></span>
+    </div>
+    <div class="table-scroll">
+      <table id="holdTable"></table>
+    </div>
+  </section>
+
+  <footer>
+    <div>
+    <p>For educational and discussion purposes only. This page measures how a portfolio is spread out; it does not measure risk, expected return or suitability, and it is not a recommendation to buy or sell any security. Sector and asset-class groupings are approximate, and funds are not broken down into their underlying holdings. The concentration levels flagged here are general rules of thumb, not limits that apply to every investor. Investing involves risk, including possible loss of principal.</p>
+    <p>Market data from Tiingo and Twelve Data, may be delayed. Not investment advice. Review with compliance before sharing any output with clients or prospects.</p>
+    </div>
+    <address class="contact">
+      <img src="bill-ippolito.jpg?v=3" alt="Bill Ippolito" width="104" height="104" />
+      <div>
+        <div class="who">Bill Ippolito</div>
+        Financial Advisor, Alexander Capital, L.P.<br />
+        <a href="tel:+17327845789">(732) 784-5789</a><br />
+        <a href="mailto:bippolito@alexandercapitallp.com">bippolito@alexandercapitallp.com</a><br />
+        <a href="https://alexandercapitalvm.com" target="_blank" rel="noopener">alexandercapitalvm.com</a><br />
+        10 Drs James Parker Blvd, Ste 202<br />Red Bank, NJ 07701
+      </div>
+    </address>
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="common.js"></script>
+<script src="sectors.js"></script>
+<script src="diversify.js"></script>
+</body>
+</html>
