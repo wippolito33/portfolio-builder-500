@@ -7,9 +7,9 @@ const money = (v) => new Intl.NumberFormat("en-US", { style: "currency", currenc
 const pctFixed = (v) => `${v.toFixed(2)}%`;
 const wholeMoney = (v) => v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
-// The original calculator records each report request (name, email, phone,
-// inputs and results) in a Google Sheet through this script.
-const SHEET_URL = "https://script.google.com/macros/s/AKfycbyLEG-yWo0ydCHB7t2P7RpXB1ONALqQo5xgan8bFZgZTYnyuOEcf1_nXuH6OaICDvA/exec";
+// Each report request (name, email, phone, inputs and results) is recorded
+// in Bill's own Google Sheet through this Apps Script web app.
+const SHEET_URL = "https://script.google.com/macros/s/AKfycbwL1E5LhVh5y6iNWz9yVwe4RROwCvcS-rmwCsVWtwifn9FavGg6welhjE8tyvoTSYWkHQ/exec";
 const BOOKING_URL = "https://outlook.office.com/bookwithme/user/233fafd30bb44d579106fe231f8b1cd6@capitalbenefitsinc.com?anonymous&ismsaljsauthenabled&ep=pcard";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ACCOUNTS = ["brokerageAccount", "traditionalIraAccount", "rothIraAccount", "account401k", "otherAccounts"];

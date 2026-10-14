@@ -79,4 +79,4 @@ The free plan allows 50 requests an hour and 1,000 a day. To stay well under tha
 
 ## Retirement Planner (`/retire.html`)
 
-A standalone copy of Jake Ippolito's Retirement Planning Calculator, restyled to match the site. `retire-calc.js` holds the calculations, ported unchanged (checked against the original on 3,000 random inputs with zero differences); `retire.js` runs the page. "View report" requires a name and email, and like the original it records the request (contact details, inputs and results) in Jake's Google Sheet through the Apps Script URL in `retire.js`. The report can be printed or saved as PDF from the browser.
+A standalone copy of Jake Ippolito's Retirement Planning Calculator, restyled to match the site. `retire-calc.js` holds the calculations, ported unchanged (checked against the original on 3,000 random inputs with zero differences); `retire.js` runs the page. "View report" requires a name and email, and it records the request (contact details, inputs and results) in Bill's own Google Sheet through the Apps Script web app URL (`SHEET_URL`) in `retire.js`. The report can be printed or saved as PDF from the browser.
