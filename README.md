@@ -76,3 +76,7 @@ The free plan allows 50 requests an hour and 1,000 a day. To stay well under tha
 - Flag thresholds are at the top of `public/diversify.js`: single stock over 10%, top five over 50%, a sector over 30% through individual stocks, no international stock, more than 20% cash, no bonds and under 5% cash.
 - Asset class and sector come from `public/sectors.js`; foreign companies listed in the U.S. (TSM, ASML, NVO, etc.) are in the `FOREIGN` list in `diversify.js` and count as international. Funds aren't broken into their holdings.
 - Holdings entered as shares are priced with `/api/quotes` (one Tiingo request per 40 tickers), falling back to the last saved month-end price.
+
+## Retirement Planner (`/retire.html`)
+
+A standalone copy of Jake Ippolito's Retirement Planning Calculator, restyled to match the site. `retire-calc.js` holds the calculations, ported unchanged (checked against the original on 3,000 random inputs with zero differences); `retire.js` runs the page. "View report" requires a name and email, and like the original it records the request (contact details, inputs and results) in Jake's Google Sheet through the Apps Script URL in `retire.js`. The report can be printed or saved as PDF from the browser.
