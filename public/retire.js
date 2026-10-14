@@ -291,16 +291,16 @@ function renderReport() {
   const row = (a, b) => `<tr><td>${a}</td><td>${b}</td></tr>`;
   const sentence = `This assumes annual retirement expenses of ${money(t.annualRetirementExpenses)} which is ${e.preRetirementIncomeDesired}% of your last year's income of ${money(t.lastYearIncome)}.`;
   const contact = `
-    Phone: (732) 948-5476<br>
+    Phone: <a href="tel:+17327845789">(732) 784-5789</a><br>
     E-mail: <a href="mailto:bippolito@alexandercapitallp.com">bippolito@alexandercapitallp.com</a><br>
-    Website: <a href="https://www.alexandercapitallp.com" target="_blank" rel="noopener noreferrer">www.alexandercapitallp.com</a><br>
+    Website: <a href="https://alexandercapitalvm.com" target="_blank" rel="noopener noreferrer">alexandercapitalvm.com</a><br>
     <a href="${BOOKING_URL}" target="_blank" rel="noopener noreferrer">Book an appointment</a>`;
 
   $("report").innerHTML = `<article class="report">
     <div class="letterhead">
       <div>
         <div class="co">Alexander Capital L.P.</div>
-        <div class="by">Prepared by<br><b>William Ippolito</b>, Financial Advisor<br>${contact}</div>
+        <div class="by">Prepared by<br><b>Bill Ippolito</b>, Financial Advisor<br>${contact}</div>
       </div>
       <div class="right">${today}<b>Retirement Planning Analysis</b></div>
     </div>
@@ -354,7 +354,7 @@ function renderReport() {
     </div>
     <p class="table-note">* This chart reflects fixed annual rates of return, expense, and income growth. It is meant solely as a guide. It is not likely that these and other variables will increase and decrease by a steady annual rate year over year.</p>
     <div class="report-foot">
-      <b>Questions about your retirement plan?</b> Contact William Ippolito.<br>${contact}
+      <b>Questions about your retirement plan?</b> Contact Bill Ippolito.<br>${contact}
       <p>Schedule a consultation to discuss your personalized retirement strategy and explore opportunities to optimize your financial future.</p>
       <b>Alexander Capital L.P.</b> Building Your Financial Future
     </div>
