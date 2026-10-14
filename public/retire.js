@@ -54,6 +54,15 @@ const FIELDS = {
   ],
 };
 
+// "1234567.5" -> "1,234,567.5" (digits after the decimal point are left alone).
+const withCommas = (str) => {
+  const [whole, ...rest] = String(str).split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return rest.length ? `${grouped}.${rest.join("")}` : grouped;
+};
+const display = (f, v) => (f && f.format === "currency" ? withCommas(String(v)) : String(v));
+const FIELD_BY_KEY = Object.fromEntries(Object.values(FIELDS).flat().map((f) => [f.key, f]));
+
 const rangeHint = (f) =>
   f.format === "currency" ? `$${f.min.toLocaleString()} - $${f.max.toLocaleString()}` : f.format === "percent" ? `${f.min}% - ${f.max}%` : `${f.min} - ${f.max}`;
 
@@ -87,19 +96,27 @@ function buildForm() {
       input.addEventListener("input", () => { state.inputs.userInfo[f.key] = input.value; validateField(f, false); });
       input.addEventListener("blur", () => { input.dataset.touched = "1"; validateField(f, false); });
     } else {
-      input.value = String(state.inputs[f.key]);
+      input.value = display(f, state.inputs[f.key]);
       // Same behavior as the original: keep digits and dots; apply the value
       // as soon as it's in range; snap to the range when leaving the box.
+      // Dollar boxes also show thousands commas while typing.
       input.addEventListener("input", () => {
+        const caret = input.selectionStart ?? input.value.length;
+        const kept = input.value.slice(0, caret).replace(/[^0-9.]/g, "").length;
         const cleaned = input.value.replace(/[^0-9.]/g, "");
-        input.value = cleaned;
+        input.value = f.format === "currency" ? withCommas(cleaned) : cleaned;
+        if (f.format === "currency" && document.activeElement === input) {
+          let pos = 0, seen = 0;
+          while (pos < input.value.length && seen < kept) { if (input.value[pos] !== ",") seen++; pos++; }
+          input.setSelectionRange(pos, pos);
+        }
         const v = parseFloat(cleaned);
         if (!isNaN(v) && v >= f.min && v <= f.max) setInput(f.key, v, false);
       });
       input.addEventListener("blur", () => {
-        const v = parseFloat(input.value);
+        const v = parseFloat(input.value.replace(/,/g, ""));
         const next = isNaN(v) || v < f.min ? f.min : v > f.max ? f.max : v;
-        input.value = String(next);
+        input.value = display(f, next);
         setInput(f.key, next, false);
       });
     }
@@ -133,9 +150,9 @@ function setInput(key, value, syncBox = true) {
   state.inputs[key] = value;
   if (ACCOUNTS.includes(key)) {
     state.inputs.currentSavings = ACCOUNTS.reduce((a, k) => a + state.inputs[k], 0);
-    $("f-currentSavings").value = String(state.inputs.currentSavings);
+    $("f-currentSavings").value = withCommas(String(state.inputs.currentSavings));
   }
-  if (syncBox && $(`f-${key}`) && $(`f-${key}`).type === "text") $(`f-${key}`).value = String(value);
+  if (syncBox && $(`f-${key}`) && $(`f-${key}`).type === "text") $(`f-${key}`).value = display(FIELD_BY_KEY[key], value);
   recalc();
 }
 
