@@ -5,7 +5,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const money = (v) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
 const pctFixed = (v) => `${v.toFixed(2)}%`;
-const shortMoney = (v) => (Math.abs(v) >= 1e6 ? `$${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M` : Math.abs(v) >= 1e3 ? `$${Math.round(v / 1e3)}K` : `$${Math.round(v)}`);
+const wholeMoney = (v) => v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
 // The original calculator records each report request (name, email, phone,
 // inputs and results) in a Google Sheet through this script.
@@ -198,9 +198,9 @@ function renderChart() {
       const x = chart.scales.x.getPixelForValue(retireIdx);
       const { ctx, chartArea: a } = chart;
       ctx.save();
-      ctx.strokeStyle = "#B7791F"; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5;
+      ctx.strokeStyle = "#102A43"; ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(x, a.top); ctx.lineTo(x, a.bottom); ctx.stroke();
-      ctx.setLineDash([]); ctx.fillStyle = "#8A5A12"; ctx.font = "500 12px 'Instrument Sans', system-ui, sans-serif";
+      ctx.setLineDash([]); ctx.fillStyle = "#102A43"; ctx.font = "500 12px 'Instrument Sans', system-ui, sans-serif";
       ctx.textAlign = x > a.right - 90 ? "right" : "left";
       ctx.fillText(`Retire at ${e.retirementAge}`, x + (x > a.right - 90 ? -6 : 6), a.top + 12);
       ctx.restore();
@@ -212,8 +212,9 @@ function renderChart() {
     data: {
       labels: rows.map((r) => r.age),
       datasets: [
-        { label: "Savings for retirement", data: rows.map((r) => r.endingBalance), borderColor: "#2a78d6", backgroundColor: "rgba(42,120,214,0.12)", fill: true, borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.15 },
-        { label: "Withdrawals for retirement", data: rows.map((r) => r.withdrawals), borderColor: "#1baf7a", backgroundColor: "#1baf7a", borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.15 },
+        // Same line styles as the home page chart: brass solid lead line, slate dashed second line.
+        { label: "Savings for retirement", data: rows.map((r) => r.endingBalance), borderColor: "#B7791F", backgroundColor: "#B7791F", borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 4, tension: 0.15 },
+        { label: "Withdrawals for retirement", data: rows.map((r) => r.withdrawals), borderColor: "#52606D", backgroundColor: "#52606D", borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, pointHoverRadius: 4, tension: 0.15 },
       ],
     },
     options: {
@@ -221,11 +222,11 @@ function renderChart() {
       interaction: { mode: "index", intersect: false },
       plugins: {
         legend: { position: "bottom", align: "start", labels: { boxWidth: 14, boxHeight: 3, font: { family: "Instrument Sans" }, color: "#52606D" } },
-        tooltip: { callbacks: { title: (c) => `Age ${c[0].label}`, label: (c) => `${c.dataset.label}: ${money(c.parsed.y)}` } },
+        tooltip: { callbacks: { title: (c) => `Age ${c[0].label}`, label: (c) => `${c.dataset.label}: ${wholeMoney(c.parsed.y)}` } },
       },
       scales: {
-        x: { title: { display: true, text: "Age", color: "#52606D", font: { family: "Instrument Sans" } }, grid: { display: false }, ticks: { color: "#52606D", font: { family: "Instrument Sans" }, maxTicksLimit: 14 } },
-        y: { beginAtZero: true, grid: { color: "#E6EBF0" }, border: { display: false }, ticks: { color: "#52606D", font: { family: "Instrument Sans" }, callback: (v) => shortMoney(v) } },
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 8, maxRotation: 0, autoSkipPadding: 12, color: "#52606D", font: { family: "Instrument Sans" }, callback(v) { return `Age ${this.getLabelForValue(v)}`; } } },
+        y: { beginAtZero: true, grid: { color: "#E6EBF0" }, ticks: { color: "#52606D", font: { family: "Instrument Sans" }, callback: (v) => wholeMoney(v) } },
       },
     },
     plugins: [retireLine],
